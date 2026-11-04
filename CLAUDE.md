@@ -165,3 +165,16 @@ Host PHP (the NativePHP/Electron runtime) is separate from the PHP inside Lando 
 - Record handoff context in the repo (`project-status.md` already serves as the clone/dump handoff log), not only in chat.
 - For a new artifact or feature, list the choices you made (what you chose, what you left out) in the final summary so the developer can redirect.
 - Commit messages follow the existing history: Conventional Commits with a scope, e.g. `fix(dashboard): show local_domain in remote site selector`.
+
+## Branches and releases
+
+- `main` is the release branch. Only merged, QA-approved work lands there, and release tags are cut from it.
+- `dev` is the integration and QA branch. Developers and users test here before anything reaches `main`.
+- Every new feature gets a branch named `feature/<feature-name>`. Every bug fix gets `bugfix/<bug-name>`. Use short kebab-case names (e.g. `feature/windows-ci`, `bugfix/import-port-clash`).
+- Process for each change:
+  1. Create the `feature/*` or `bugfix/*` branch from `main`.
+  2. Commit all the necessary changes to that branch.
+  3. When the branch is stable, open a PR from it into `dev`.
+  4. QA happens on `dev` with other developers and users.
+  5. Once QA passes, open a PR from the same custom branch into `main`.
+- Do not commit directly to `main` or `dev`. Do not open the `main` PR before the `dev` QA pass.
