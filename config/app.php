@@ -13,7 +13,7 @@ return [
     |
     */
 
-    'name' => env('APP_NAME', 'Laravel'),
+    'name' => env('APP_NAME', 'Lando Studio'),
 
     /*
     |--------------------------------------------------------------------------
@@ -57,11 +57,11 @@ return [
     /*
     |--------------------------------------------------------------------------
     | Source repository (About page). Static HTTPS form of git origin:
-    | git@github.com:lajennylove/lando-installer.git
+    | git@github.com:lajennylove/lando-studio.git
     |--------------------------------------------------------------------------
     */
 
-    'repository_url' => env('APP_REPOSITORY_URL', 'https://github.com/lajennylove/lando-installer'),
+    'repository_url' => env('APP_REPOSITORY_URL', 'https://github.com/lajennylove/lando-studio'),
 
     /*
     |--------------------------------------------------------------------------

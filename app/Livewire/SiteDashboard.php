@@ -599,7 +599,7 @@ class SiteDashboard extends Component
                 $this->actionLabel = '';
                 $this->actionStartedAt = null;
                 $this->actionOutput = 'Command failed to start — log file was never created. Check that Lando is installed and in your PATH.';
-                $this->dispatch('landodev-scroll-terminal');
+                $this->dispatch('lando-studio-scroll-terminal');
                 $this->notifyError('Action failed to start.');
             }
 
@@ -608,7 +608,7 @@ class SiteDashboard extends Component
 
         $content = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
         $this->actionOutput = $content;
-        $this->dispatch('landodev-scroll-terminal');
+        $this->dispatch('lando-studio-scroll-terminal');
 
         if ($elapsed > 600) {
             $this->actionRunning = false;

@@ -31,7 +31,7 @@ class RemoteConnectionVerifierTest extends TestCase
 
         Process::fake([
             '*' => Process::sequence()
-                ->push(Process::result(output: 'LANDODEV_SSH_OK'))
+                ->push(Process::result(output: 'LANDO_STUDIO_SSH_OK'))
                 ->push(Process::result(output: "-- MariaDB dump 10.6\n")),
         ]);
 
@@ -82,7 +82,7 @@ class RemoteConnectionVerifierTest extends TestCase
 
         Process::fake([
             '*' => Process::sequence()
-                ->push(Process::result(output: 'LANDODEV_SSH_OK'))
+                ->push(Process::result(output: 'LANDO_STUDIO_SSH_OK'))
                 ->push(Process::result(output: 'ERROR 1045 (28000): Access denied for user')),
         ]);
 

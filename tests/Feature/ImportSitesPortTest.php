@@ -115,7 +115,7 @@ class ImportSitesPortTest extends TestCase
         $log = $component->get('rebuildLogFile');
         $this->assertTrue($component->get('rebuildRunning'));
 
-        file_put_contents((string) $log, "rebuilding...\n[LandoDEV] Port rebuild finished\n");
+        file_put_contents((string) $log, "rebuilding...\n[Lando Studio] Port rebuild finished\n");
 
         $component->call('pollRebuild');
 

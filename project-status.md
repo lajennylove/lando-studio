@@ -1,4 +1,4 @@
-# LandoDEV — Clone / remote DB dump work (status & handoff)
+# Lando Studio — Clone / remote DB dump work (status & handoff)
 
 This document summarizes work on the **clone-from-remote** flow, terminal UX, and repeated **database dump / import / WP-CLI** failures. Use it when opening a **new thread** so the next session does not re-derive context from scratch.
 
@@ -31,7 +31,7 @@ Evolution (all aimed at Cloudways + **no remote temp files**):
 1. **Streaming `ssh | gzip > local`** — could truncate gzip or produce tiny archives on stream drop; **`pipefail`** added on macOS/Linux.
 2. **Remote write + `scp`** — abandoned: policy **no remote files**; also **MySecureShell** mangled `bash -c '…'` (only first word became `-c` argument → `set` dumped environment).
 3. **Local `.sql` then `gzip -c`** — mysqldump streams to **`dumpfile.sql`**, then compress to **`dumpfile.sql.gz`**, then delete `.sql` (still no server files).
-4. **Heartbeat in step log** — `WithCommandExecution` marks a step complete after **30s with no log writes**. Dump stdout goes to the **SQL file**, so the log stayed quiet and the UI advanced **too early** → partial dump → “too small” / corrupt gzip. **Fix:** background loop printing `[LandoDEV] Database dump in progress …` every **25s** until `ssh` + `gzip` finish, with **`trap`** cleanup.
+4. **Heartbeat in step log** — `WithCommandExecution` marks a step complete after **30s with no log writes**. Dump stdout goes to the **SQL file**, so the log stayed quiet and the UI advanced **too early** → partial dump → “too small” / corrupt gzip. **Fix:** background loop printing `[Lando Studio] Database dump in progress …` every **25s** until `ssh` + `gzip` finish, with **`trap`** cleanup.
 5. **`SSHPASS` inline for `sshpass -e`** — after heartbeats ran for many minutes, **`sshpass` failed** with:
    `sshpass: -e option given but SSHPASS environment variable not set`  
    **Cause:** `export SSHPASS=…` was not reliably visible to `sshpass` in the **NativePHP/Electron** child shell. **Fix:** use the same pattern as rsync:  
@@ -53,7 +53,7 @@ Evolution (all aimed at Cloudways + **no remote temp files**):
 ### Clone UI
 
 - Progress layout: **⅓ steps / ⅔ terminal** on large screens (`lg:grid-cols-3`).
-- **Autoscroll:** `WithCommandExecution` / **`SiteDashboard`** dispatch **`landodev-scroll-terminal`**; terminal divs listen with **`@landodev-scroll-terminal.window`** and **`requestAnimationFrame`** scroll; stable **`wire:key`** to avoid remount thrashing.
+- **Autoscroll:** `WithCommandExecution` / **`SiteDashboard`** dispatch **`lando-studio-scroll-terminal`**; terminal divs listen with **`@lando-studio-scroll-terminal.window`** and **`requestAnimationFrame`** scroll; stable **`wire:key`** to avoid remount thrashing.
 
 ### Terminal / ASCII art (Lando banners)
 
@@ -61,7 +61,7 @@ Evolution (all aimed at Cloudways + **no remote temp files**):
 
 ### Remote file cleanup (manual / one-off)
 
-- User requested removal of stray **`landodev_*`** artifacts under **`/tmp`** and searches under **`public_html`** for matching **`.sql` / `.sql.gz`** — documented in chat; app flow no longer creates files on the server for dumps.
+- User requested removal of stray **`lando-studio_*`** artifacts under **`/tmp`** and searches under **`public_html`** for matching **`.sql` / `.sql.gz`** — documented in chat; app flow no longer creates files on the server for dumps.
 
 ---
 
@@ -90,10 +90,10 @@ md5 hash verified: 9355f37ee9ec885c93e3ca87ba8538d4
 Success: WordPress downloaded.
 
 sshpass: -e option given but SSHPASS environment variable not set
-[LandoDEV] Database dump in progress 15:05:14
-[LandoDEV] Database dump in progress 15:05:39
+[Lando Studio] Database dump in progress 15:05:14
+[Lando Studio] Database dump in progress 15:05:39
 … (repeats every ~25s) …
-[LandoDEV] Database dump in progress 15:14:49
+[Lando Studio] Database dump in progress 15:14:49
 ```
 
 Despite the heartbeats, **“Dumping remote database”** was ultimately marked **failed** — consistent with **`sshpass`** not receiving **`SSHPASS`** after `export` (now addressed with inline `SSHPASS=` on the `sshpass` line).

@@ -1,6 +1,6 @@
-# LandoDEV — AI assistant guide
+# Lando Studio — AI assistant guide
 
-This is the single source of truth for coding agents working in **lando-installer** (LandoDEV). `.cursorrules` and `.github/copilot-instructions.md` are symlinks to this file. Edit only this file.
+This is the single source of truth for coding agents working in **lando-studio** (Lando Studio). `.cursorrules` and `.github/copilot-instructions.md` are symlinks to this file. Edit only this file.
 
 ## What this repository is
 
@@ -58,7 +58,7 @@ Host PHP (the NativePHP/Electron runtime) is separate from the PHP inside Lando 
 | `/create/new` | `NewSite` | New-site wizard |
 | `/create/clone` | `CloneSite` | Clone from a remote |
 | `/sites/{site}` | `SiteDashboard` | Per-site controls; `Site` route-model binding |
-| `/settings` | `Settings` | Defaults saved to `storage/landodev_defaults.json` |
+| `/settings` | `Settings` | Defaults saved to `storage/lando_studio_defaults.json` |
 | `/settings/import` | `ImportSites` | Batch import |
 | `/about` | `About` | Version info |
 
@@ -124,7 +124,7 @@ Host PHP (the NativePHP/Electron runtime) is separate from the PHP inside Lando 
 
 - Full-page components: `#[Layout('components.layouts.app')]` and `#[Title('…')]`. Use `WithNotifications` for toasts, not ad hoc `dispatch('notify')`.
 - Use `wire:navigate` for in-app links, and relative `route(..., [], false)`.
-- Terminal output scrolls through the `landodev-scroll-terminal` window event. Keep `wire:key` stable so terminals do not remount.
+- Terminal output scrolls through the `lando-studio-scroll-terminal` window event. Keep `wire:key` stable so terminals do not remount.
 - **Flux first.** Reach for Flux components before writing custom markup. Styling is Tailwind v4 in `resources/css/app.css`.
 - Keep Blade logic light. Compute data in the component or a service, not in the view.
 
@@ -145,9 +145,9 @@ Host PHP (the NativePHP/Electron runtime) is separate from the PHP inside Lando 
 ## Guardrails
 
 - **Focused diffs.** Change only what the task needs. No drive-by refactors, reformatting, or renames in unrelated files.
-- **Do not rename** routes, the `Site` route-model binding, or the `landodev-*` window events without updating every Livewire and Blade caller.
+- **Do not rename** routes, the `Site` route-model binding, or the `lando-studio-*` window events without updating every Livewire and Blade caller.
 - **Do not** change the Vite port, the Electron/NativePHP setup, or the host PHP selection in `scripts/native-php.sh` without checking the desktop dev flow.
-- **Do not** commit `.env`, `vendor/`, `node_modules/`, `public/build/`, `public/hot`, `storage/landodev_defaults.json`, or `storage/logs/*.log`. All are gitignored; do not force-add them.
+- **Do not** commit `.env`, `vendor/`, `node_modules/`, `public/build/`, `public/hot`, `storage/lando_studio_defaults.json`, or `storage/logs/*.log`. All are gitignored; do not force-add them.
 - **Do not** add dump, debug, or log statements to committed code (`dd`, `dump`, `var_dump`, `ray`). The codebase currently has none.
 - **Do not** write dump artifacts on the remote server. Dumps are produced locally only. The remote-file policy is in `project-status.md`.
 - **Working with specs and designs:** if a specification or design does not match the code or the other design, say so explicitly to the developer. Name both sides and the gap; do not silently pick one.

@@ -114,7 +114,7 @@ class DependencyCheck extends Component
             $raw = file_get_contents($this->installLogFile) ?: '';
             $raw = self::decodeLogBytes($raw);
             $this->installOutput = mb_substr($raw, -6000);
-            $this->dispatch('landodev-scroll-terminal');
+            $this->dispatch('lando-studio-scroll-terminal');
         }
 
         $this->checkDependencies();
@@ -125,7 +125,7 @@ class DependencyCheck extends Component
                 $this->installing = false;
                 $this->installingDep = '';
                 $this->installLogFile = '';
-                $this->dispatch('landodev-scroll-terminal');
+                $this->dispatch('lando-studio-scroll-terminal');
                 $this->notifySuccess('Lando plugins installed successfully!');
             }
 
@@ -137,7 +137,7 @@ class DependencyCheck extends Component
             $this->installing = false;
             $this->installingDep = '';
             $this->installLogFile = '';
-            $this->dispatch('landodev-scroll-terminal');
+            $this->dispatch('lando-studio-scroll-terminal');
             $this->notifySuccess("{$dep['label']} installed successfully!");
         }
     }

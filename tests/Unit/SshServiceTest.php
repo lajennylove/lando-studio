@@ -44,7 +44,7 @@ class SshServiceTest extends TestCase
         $this->assertStringContainsString('/local/dumpfile.sql', $cmd);
         $this->assertStringContainsString('gzip -c', $cmd);
         $this->assertStringContainsString('/local/dumpfile.sql.gz', $cmd);
-        $this->assertStringContainsString('LANDODEV_HB', $cmd);
+        $this->assertStringContainsString('LANDO_STUDIO_HB', $cmd);
         $this->assertStringContainsString('Database dump in progress', $cmd);
         $this->assertStringNotContainsString('| gzip >', $cmd);
         $this->assertStringContainsString('-T', $cmd);

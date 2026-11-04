@@ -74,14 +74,14 @@ class SshService
                 .' | gzip > '.$localGz;
         }
 
-        $trapCleanup = escapeshellarg('kill $LANDODEV_HB 2>/dev/null; wait $LANDODEV_HB 2>/dev/null');
+        $trapCleanup = escapeshellarg('kill $LANDO_STUDIO_HB 2>/dev/null; wait $LANDO_STUDIO_HB 2>/dev/null');
 
         // Use ';' (not '&&') so rm -f runs synchronously BEFORE the heartbeat background job starts.
         // '&&' has higher precedence than '&', so "rm && heartbeat &" would background the whole
         // AND-list — rm and sshpass would then race, rm could delete the file after '>' creates it
         // but before SSH finishes writing, causing "gzip: can't stat: dumpfile.sql".
         // Drop the extra '( )' around the while loop: with "( while ) &", $! is the outer subshell
-        // and "kill $LANDODEV_HB" leaves the inner while-loop subshell orphaned (heartbeats keep
+        // and "kill $LANDO_STUDIO_HB" leaves the inner while-loop subshell orphaned (heartbeats keep
         // printing for minutes). Without '( )', $! IS the while-loop's bash process; killing it
         // stops the loop (the in-flight 'sleep 20' child finishes at most 20s later, then stops).
         //
@@ -94,11 +94,11 @@ class SshService
         // the only thing keeping the log alive during both phases. 20s gives a 10s safety margin
         // vs the 5s margin of the previous 25s interval — enough headroom under CPU/IO load.
         return 'rm -f '.$localSql.' '.$localGz
-            .'; while sleep 20; do echo "[Lando Studio] Database dump in progress $(date -u +%H:%M:%S)"; done & LANDODEV_HB=$!'
+            .'; while sleep 20; do echo "[Lando Studio] Database dump in progress $(date -u +%H:%M:%S)"; done & LANDO_STUDIO_HB=$!'
             .' && trap '.$trapCleanup.' EXIT'
             .' && set -o pipefail && '.$sshpassSsh.' '.$target.' '.$remoteArg.' > '.$localSql
             .' && gzip -c '.$localSql.' > '.$localGz.' && rm -f '.$localSql
-            .' && kill $LANDODEV_HB 2>/dev/null && wait $LANDODEV_HB 2>/dev/null && trap - EXIT';
+            .' && kill $LANDO_STUDIO_HB 2>/dev/null && wait $LANDO_STUDIO_HB 2>/dev/null && trap - EXIT';
     }
 
     public function buildRsyncPluginsCommand(RemoteSite $remote, string $localPluginsPath): string

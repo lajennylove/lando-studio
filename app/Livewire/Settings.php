@@ -163,7 +163,7 @@ class Settings extends Component
 
     private function persistDefaults(): void
     {
-        $path = storage_path('landodev_defaults.json');
+        $path = storage_path('lando_studio_defaults.json');
         file_put_contents($path, json_encode([
             'php_version' => $this->defaultPhpVersion,
             'db_version' => $this->defaultDbVersion,
@@ -174,7 +174,7 @@ class Settings extends Component
 
     private function loadDefaults(): array
     {
-        $path = storage_path('landodev_defaults.json');
+        $path = storage_path('lando_studio_defaults.json');
         if (file_exists($path)) {
             return json_decode(file_get_contents($path), true) ?? [];
         }
@@ -187,7 +187,7 @@ class Settings extends Component
      */
     public static function getDefault(string $key): ?string
     {
-        $path = storage_path('landodev_defaults.json');
+        $path = storage_path('lando_studio_defaults.json');
         if (file_exists($path)) {
             $data = json_decode(file_get_contents($path), true) ?? [];
 
@@ -401,13 +401,13 @@ class Settings extends Component
         if ($this->landoUpdateLogFile && file_exists($this->landoUpdateLogFile)) {
             $raw = file_get_contents($this->landoUpdateLogFile) ?: '';
             $this->landoUpdateOutput = mb_substr(LogContentUtf8::forLivewire($raw), -6000);
-            $this->dispatch('landodev-scroll-terminal');
+            $this->dispatch('lando-studio-scroll-terminal');
         }
 
         if (str_contains($this->landoUpdateOutput, '[Lando Studio] lando update finished')) {
             $this->landoUpdating = false;
             $this->landoUpdateLogFile = '';
-            $this->dispatch('landodev-scroll-terminal');
+            $this->dispatch('lando-studio-scroll-terminal');
             $this->notifySuccess('Lando updated successfully!');
         }
     }

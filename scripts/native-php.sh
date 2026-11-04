@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host PHP for the LandoDEV desktop app only (NativePHP + Electron).
+# Host PHP for the Lando Studio desktop app only (NativePHP + Electron).
 # Use Homebrew PHP here so `artisan native:serve` matches nativephp/php-bin zips (8.3 / 8.4).
 # This is unrelated to Settings → default PHP for WordPress sites; that value is applied inside Lando.
 #

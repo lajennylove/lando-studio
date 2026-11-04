@@ -341,11 +341,11 @@ class LandoService
     private function withHeartbeat(string $message, string $command): string
     {
         $msg = escapeshellarg($message);
-        $trapCleanup = escapeshellarg('kill $LANDODEV_HB 2>/dev/null; wait $LANDODEV_HB 2>/dev/null');
+        $trapCleanup = escapeshellarg('kill $LANDO_STUDIO_HB 2>/dev/null; wait $LANDO_STUDIO_HB 2>/dev/null');
 
-        return 'while sleep 20; do echo '.$msg.'; done & LANDODEV_HB=$!'
+        return 'while sleep 20; do echo '.$msg.'; done & LANDO_STUDIO_HB=$!'
             .' && trap '.$trapCleanup.' EXIT'
             .' && ('.$command.')'
-            .' && kill $LANDODEV_HB 2>/dev/null && wait $LANDODEV_HB 2>/dev/null && trap - EXIT';
+            .' && kill $LANDO_STUDIO_HB 2>/dev/null && wait $LANDO_STUDIO_HB 2>/dev/null && trap - EXIT';
     }
 }

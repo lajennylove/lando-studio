@@ -66,7 +66,7 @@ jobs:
 
       - name: Build macOS app
         env:
-          NATIVEPHP_APP_ID: com.landodev.app
+          NATIVEPHP_APP_ID: com.landostudio.app
           NATIVEPHP_APP_VERSION: ${{ inputs.version }}
           NATIVEPHP_UPDATER_ENABLED: 'false'
           # Code signing is skipped for test builds. Set these secrets for
@@ -87,7 +87,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LandoDEV-${{ inputs.version }}-macos-${{ inputs.arch }}
+          name: Lando-Studio-${{ inputs.version }}-macos-${{ inputs.arch }}
           path: dist/
           if-no-files-found: warn
           retention-days: 7

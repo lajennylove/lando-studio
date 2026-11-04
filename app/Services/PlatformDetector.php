@@ -62,7 +62,7 @@ class PlatformDetector
 
     public function defaultCodePath(): string
     {
-        // Check persisted settings first (from Settings UI / landodev_defaults.json)
+        // Check persisted settings first (from Settings UI / lando_studio_defaults.json)
         $persisted = Settings::getDefault('code_path');
         if (is_string($persisted) && trim($persisted) !== '') {
             $expanded = str_replace('~', $this->homeDir(), $persisted);

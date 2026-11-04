@@ -109,7 +109,7 @@
                 id="terminal-output"
                 x-data="{ autoScroll: true }"
                 wire:key="setup-terminal"
-                @landodev-scroll-terminal.window="if (autoScroll) { requestAnimationFrame(() => { $el.scrollTop = $el.scrollHeight }) }"
+                @lando-studio-scroll-terminal.window="if (autoScroll) { requestAnimationFrame(() => { $el.scrollTop = $el.scrollHeight }) }"
                 @scroll="autoScroll = ($el.scrollTop + $el.clientHeight >= $el.scrollHeight - 50)"
                 class="bg-zinc-900 text-green-400 font-mono text-xs p-4 rounded-lg overflow-y-auto flex-1 min-h-[20rem] h-[min(32rem,calc(100dvh-14rem))] lg:min-h-[calc(100dvh-10rem)] lg:h-[calc(100dvh-10rem)]"
             >

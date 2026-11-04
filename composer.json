@@ -1,6 +1,6 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "landodev/app",
+    "name": "landostudio/app",
     "type": "project",
     "description": "Lando Studio - Local WordPress Development Manager powered by Lando",
     "keywords": ["laravel", "nativephp", "lando", "wordpress"],

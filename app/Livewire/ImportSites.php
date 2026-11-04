@@ -23,7 +23,7 @@ class ImportSites extends Component
 {
     use WithNotifications;
 
-    private const REBUILD_DONE_MARKER = '[LandoDEV] Port rebuild finished';
+    private const REBUILD_DONE_MARKER = '[Lando Studio] Port rebuild finished';
 
     /** @var array<int, array{name: string, path: string, php_version: string, db_type: string, db_version: string, redis_version: string|null, db_port: int|null}> */
     public array $candidates = [];

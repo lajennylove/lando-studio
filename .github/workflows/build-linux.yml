@@ -82,7 +82,7 @@ jobs:
 
       - name: Build Linux app
         env:
-          NATIVEPHP_APP_ID: com.landodev.app
+          NATIVEPHP_APP_ID: com.landostudio.app
           NATIVEPHP_APP_VERSION: ${{ inputs.version }}
           NATIVEPHP_UPDATER_ENABLED: 'false'
           APP_ENV: production
@@ -100,7 +100,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LandoDEV-${{ inputs.version }}-linux-${{ inputs.arch }}
+          name: Lando-Studio-${{ inputs.version }}-linux-${{ inputs.arch }}
           path: dist/
           if-no-files-found: warn
           retention-days: 7

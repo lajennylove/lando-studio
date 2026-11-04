@@ -59,18 +59,18 @@ final class RemoteConnectionVerifier
                 '-o', 'ConnectTimeout=20',
                 '-o', 'BatchMode=no',
                 $target,
-                'echo', 'LANDODEV_SSH_OK',
+                'echo', 'LANDO_STUDIO_SSH_OK',
             ]);
 
         $sshOut = $sshProbe->output().$sshProbe->errorOutput();
         $sshExitCode = $sshProbe->exitCode();
         Log::debug('RemoteConnectionVerifier: SSH probe result', [
             'exit_code' => $sshExitCode,
-            'output_contains_marker' => str_contains($sshOut, 'LANDODEV_SSH_OK'),
+            'output_contains_marker' => str_contains($sshOut, 'LANDO_STUDIO_SSH_OK'),
             'output_length' => strlen($sshOut),
         ]);
 
-        if (! str_contains($sshOut, 'LANDODEV_SSH_OK')) {
+        if (! str_contains($sshOut, 'LANDO_STUDIO_SSH_OK')) {
             $detail = trim($sshOut) !== '' ? trim($sshOut) : 'SSH exited with code '.$sshExitCode;
             Log::warning('RemoteConnectionVerifier: SSH failed', ['detail' => $detail]);
 

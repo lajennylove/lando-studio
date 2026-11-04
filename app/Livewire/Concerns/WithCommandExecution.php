@@ -145,7 +145,7 @@ trait WithCommandExecution
 
         $content = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
         $this->terminalOutput = $this->capLivewireOutput($this->completedOutput.$content);
-        $this->dispatch('landodev-scroll-terminal');
+        $this->dispatch('lando-studio-scroll-terminal');
         $this->steps[$this->currentStep]['output'] = $this->tailLines($content, 10);
 
         // Overall timeout for a single step; default 10 min, but dump steps may override higher.

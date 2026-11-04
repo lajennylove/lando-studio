@@ -23,7 +23,7 @@ return [
         ? ['7.0', '6.2', '6.0']
         : ['8.6', '8.4', '8.2', '8.0', '7.4', '7.2', '7.0', '6.2', '6.0'],
     // Host path for new Lando sites; default ~/code/sites/ is resolved in PlatformDetector (cross-platform).
-    'code_path' => env('LANDODEV_CODE_PATH', null),
+    'code_path' => env('LANDO_STUDIO_CODE_PATH', null),
     'db_name' => 'wordpress',
     'db_user' => 'wordpress',
     'db_password' => 'wordpress',

@@ -82,7 +82,7 @@ final class ApplicationDatabaseReset
                 continue;
             }
             $resolvedPaths[$key] = true;
-            $conn = '__landodev_sqlite_'.$i++;
+            $conn = '__lando_studio_sqlite_'.$i++;
             config([
                 "database.connections.{$conn}" => [
                     'driver' => 'sqlite',
@@ -121,14 +121,14 @@ final class ApplicationDatabaseReset
                 $hasSites = self::connectionHasSitesTable($name);
                 $count = $hasSites ? Site::on($name)->count() : null;
                 $rows[] = [
-                    'connection' => str_starts_with($name, '__landodev_sqlite_') ? 'extra SQLite file' : $name,
+                    'connection' => str_starts_with($name, '__lando_studio_sqlite_') ? 'extra SQLite file' : $name,
                     'path' => $pathStr,
                     'file_exists' => $exists,
                     'site_count' => $count,
                 ];
             } catch (\Throwable $e) {
                 $rows[] = [
-                    'connection' => str_starts_with($name, '__landodev_sqlite_') ? 'extra SQLite file' : $name,
+                    'connection' => str_starts_with($name, '__lando_studio_sqlite_') ? 'extra SQLite file' : $name,
                     'path' => $pathStr,
                     'file_exists' => $pathStr !== '' && File::exists($pathStr),
                     'site_count' => null,
@@ -229,7 +229,7 @@ final class ApplicationDatabaseReset
 
     /**
      * Clear local sites (command_logs cascade), remote site presets, and DB sessions.
-     * Does not run lando destroy, delete disk folders, or remove landodev_defaults.json.
+     * Does not run lando destroy, delete disk folders, or remove lando_studio_defaults.json.
      */
     public static function wipe(): void
     {

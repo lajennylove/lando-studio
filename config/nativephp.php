@@ -5,7 +5,7 @@ use App\Providers\NativeAppServiceProvider;
 return [
     'version' => env('NATIVEPHP_APP_VERSION', '1.0.0'),
 
-    'app_id' => env('NATIVEPHP_APP_ID', 'com.landodev.app'),
+    'app_id' => env('NATIVEPHP_APP_ID', 'com.landostudio.app'),
 
     'deeplink_scheme' => env('NATIVEPHP_DEEPLINK_SCHEME'),
 

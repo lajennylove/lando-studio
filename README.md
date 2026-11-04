@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="public/assets/rocket.png" alt="LandoDEV" width="60" height="60" />
+  <img src="public/assets/rocket.png" alt="Lando Studio" width="60" height="60" />
 </p>
 
-# LandoDEV
+# Lando Studio
 
-**LandoDEV** is a desktop app for managing local **WordPress** development environments powered by [**Lando**](https://lando.dev). It wraps a [**Laravel**](https://laravel.com) + [**Livewire**](https://livewire.laravel.com) UI inside a [**NativePHP**](https://nativephp.com) / Electron shell so you can create sites, run Lando commands, clone environments, and tune PHP/DB/Redis defaults without living in the terminal.
+**Lando Studio** is a desktop app for managing local **WordPress** development environments powered by [**Lando**](https://lando.dev). It wraps a [**Laravel**](https://laravel.com) + [**Livewire**](https://livewire.laravel.com) UI inside a [**NativePHP**](https://nativephp.com) / Electron shell so you can create sites, run Lando commands, clone environments, and tune PHP/DB/Redis defaults without living in the terminal.
 
 ## Tech stack
 
@@ -26,8 +26,8 @@
 ## Quick start (developers)
 
 ```bash
-git clone git@github.com:lajennylove/lando-installer.git
-cd lando-installer
+git clone git@github.com:lajennylove/lando-studio.git
+cd lando-studio
 git checkout dev
 
 cp .env.example .env

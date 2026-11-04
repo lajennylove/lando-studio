@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NativePHP dev server only (LandoDEV desktop UI). Host PHP from Homebrew — not Lando’s PHP for sites.
+# NativePHP dev server only (Lando Studio desktop UI). Host PHP from Homebrew — not Lando’s PHP for sites.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

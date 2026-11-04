@@ -160,7 +160,7 @@
                 <div
                     id="lando-update-output"
                     x-data="{ autoScroll: true }"
-                    @landodev-scroll-terminal.window="if (autoScroll) { requestAnimationFrame(() => { $el.scrollTop = $el.scrollHeight }) }"
+                    @lando-studio-scroll-terminal.window="if (autoScroll) { requestAnimationFrame(() => { $el.scrollTop = $el.scrollHeight }) }"
                     @scroll="autoScroll = ($el.scrollTop + $el.clientHeight >= $el.scrollHeight - 50)"
                     class="bg-zinc-900 text-green-400 font-mono text-xs p-4 rounded-lg overflow-y-auto max-h-64"
                 >
