@@ -65,4 +65,35 @@ class LandoYamlParser
             'db_port' => $dbPort,
         ];
     }
+
+    /**
+     * Every fixed host port a project publishes (any service: database, cache, ...).
+     * Dynamic ports (`portforward: true`) are skipped because Docker picks them at start.
+     *
+     * @return list<int>
+     */
+    public function publishedPorts(string $filePath): array
+    {
+        if (! file_exists($filePath)) {
+            return [];
+        }
+
+        try {
+            $data = Yaml::parseFile($filePath);
+        } catch (ParseException) {
+            return [];
+        }
+
+        $ports = [];
+
+        foreach ((array) ($data['services'] ?? []) as $service) {
+            $portForward = is_array($service) ? ($service['portforward'] ?? null) : null;
+
+            if (is_int($portForward) && $portForward > 0) {
+                $ports[] = $portForward;
+            }
+        }
+
+        return $ports;
+    }
 }

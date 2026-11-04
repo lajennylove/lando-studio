@@ -7,6 +7,18 @@
         <div class="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 lg:items-start [min-height:calc(100dvh-10rem)]">
             <div class="space-y-2 min-w-0 lg:col-span-1 lg:max-h-[calc(100dvh-10rem)] lg:overflow-y-auto lg:pr-1">
                 @foreach($steps as $index => $step)
+                    @php
+                        $stepGroup = $step['group'] ?? null;
+                        $prevGroup = $index > 0 ? ($steps[$index - 1]['group'] ?? null) : null;
+                        $showGroupHeader = $stepGroup !== null && $stepGroup !== $prevGroup;
+                    @endphp
+                    @if($showGroupHeader)
+                        <div class="pt-1 pb-0.5">
+                            <flux:text class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                                {{ $stepGroup }}
+                            </flux:text>
+                        </div>
+                    @endif
                     <div class="flex items-center gap-3 p-3 rounded-lg {{ match($step['status']) {
                         'completed' => 'bg-green-50 dark:bg-green-900/20',
                         'running' => 'bg-blue-50 dark:bg-blue-900/20',

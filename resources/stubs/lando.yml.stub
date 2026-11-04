@@ -39,13 +39,18 @@ tooling:
     service: appserver
     description: Run Yarn commands
     cmd: yarn
+  theme-install:
+    service: appserver
+    description: Install Yarn dependencies in the active theme
+    user: root
+    cmd: bash -c "cd /app/wp/wp-content/themes/{{THEME_SLUG}} && yarn install"
   dev:
     service: appserver
-    description: Run Yarn in development mode
+    description: Run Yarn in development mode (theme HMR)
     user: root
-    cmd: bash -c "cd /app/wp/wp-content/themes/{{SITE_NAME}} && yarn dev"
+    cmd: bash -c "cd /app/wp/wp-content/themes/{{THEME_SLUG}} && yarn dev"
   build:
     service: appserver
-    description: Run Yarn to build assets
+    description: Run Yarn to build theme assets
     user: root
-    cmd: bash -c "cd /app/wp/wp-content/themes/{{SITE_NAME}} && yarn build"
+    cmd: bash -c "cd /app/wp/wp-content/themes/{{THEME_SLUG}} && yarn build"

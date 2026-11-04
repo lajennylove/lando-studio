@@ -15,6 +15,14 @@ class ApplicationDatabaseResetTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Without this, wipe() also empties the real database/nativephp.sqlite on disk.
+        config(['lando_dev.extra_sqlite_paths' => []]);
+    }
+
     public function test_wipe_removes_sites_and_remote_sites(): void
     {
         Site::create([

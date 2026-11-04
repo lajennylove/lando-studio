@@ -11,15 +11,17 @@
 
 return [
     'php_version' => '8.3',
-    'php_versions' => ['8.4', '8.3', '8.2', '8.1', '8.0'],
+    // Newest PHP Lando 3.26 supports is 8.5 (see plugins/@lando/php builders/php.js).
+    'php_versions' => ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0'],
     'db_type' => 'mariadb',
-    'db_version' => '10.6',
-    'db_versions' => ['11.7', '11.4', '10.11', '10.6', '10.5'],
-    // Lando v3 on Windows does not support Redis 7.2 or 7.4. macOS/Linux support up to 7.4.
-    'redis_version' => PHP_OS_FAMILY === 'Windows' ? '7.0' : '7.4',
+    // Newest MariaDB Lando 3.26 supports (see plugins/@lando/mariadb builders/mariadb.js).
+    'db_version' => '11.8',
+    'db_versions' => ['11.8', '11.7', '11.4', '10.11', '10.6', '10.5'],
+    // Lando v3 on Windows does not support Redis 7.2 or 7.4. macOS/Linux support up to 8.6 (Lando 3.26).
+    'redis_version' => PHP_OS_FAMILY === 'Windows' ? '7.0' : '8.6',
     'redis_versions' => PHP_OS_FAMILY === 'Windows'
         ? ['7.0', '6.2', '6.0']
-        : ['7.4', '7.2', '7.0', '6.2', '6.0'],
+        : ['8.6', '8.4', '8.2', '8.0', '7.4', '7.2', '7.0', '6.2', '6.0'],
     // Host path for new Lando sites; default ~/code/sites/ is resolved in PlatformDetector (cross-platform).
     'code_path' => env('LANDODEV_CODE_PATH', null),
     'db_name' => 'wordpress',

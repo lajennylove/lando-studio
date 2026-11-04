@@ -110,6 +110,7 @@ class SiteDashboard extends Component
         $this->checkRealStatus();
         if (! $this->isProjectMissingOnDisk()) {
             $this->loadAvailableThemes();
+            $this->regenerateLandoYaml();
         }
     }
 
@@ -328,6 +329,124 @@ class SiteDashboard extends Component
         );
     }
 
+    public function selectedThemeSlug(): string
+    {
+        $slug = trim($this->activeTheme);
+
+        return $slug !== '' ? $slug : trim((string) ($this->site->theme_name ?? ''));
+    }
+
+    public function selectedThemePathOnHost(): string
+    {
+        $slug = $this->selectedThemeSlug();
+        if ($slug === '' || $this->site->path === '') {
+            return '';
+        }
+
+        return $this->site->path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes'.DIRECTORY_SEPARATOR.$slug;
+    }
+
+    public function selectedThemeHasComposer(): bool
+    {
+        $base = $this->selectedThemePathOnHost();
+
+        return $base !== '' && is_file($base.DIRECTORY_SEPARATOR.'composer.json');
+    }
+
+    public function selectedThemeHasPackageJson(): bool
+    {
+        $base = $this->selectedThemePathOnHost();
+
+        return $base !== '' && is_file($base.DIRECTORY_SEPARATOR.'package.json');
+    }
+
+    public function selectedThemeHasVendor(): bool
+    {
+        $base = $this->selectedThemePathOnHost();
+
+        return $base !== '' && is_dir($base.DIRECTORY_SEPARATOR.'vendor');
+    }
+
+    public function selectedThemeRelativeAppPath(): string
+    {
+        $slug = $this->selectedThemeSlug();
+
+        return $slug === '' ? '' : 'wp/wp-content/themes/'.$slug;
+    }
+
+    public function runThemeComposerDeps(): void
+    {
+        if ($this->isProjectMissingOnDisk()) {
+            $this->notifyError('Project folder is missing on disk.');
+
+            return;
+        }
+
+        if (! $this->selectedThemeHasComposer()) {
+            $this->notifyError('The selected theme has no composer.json.');
+
+            return;
+        }
+
+        $subdir = $this->selectedThemeRelativeAppPath();
+        if ($subdir === '') {
+            $this->notifyError('Select a theme first.');
+
+            return;
+        }
+
+        $this->regenerateLandoYaml();
+        $lando = app(LandoService::class);
+        $path = $this->site->path;
+
+        if ($this->selectedThemeHasVendor()) {
+            $this->runAction('Composer update', $lando->composerUpdateWithHeartbeat($path, $subdir));
+        } else {
+            $this->runAction('Composer install', $lando->composerInstallWithHeartbeat($path, $subdir));
+        }
+    }
+
+    public function runThemeYarnInstall(): void
+    {
+        if ($this->isProjectMissingOnDisk()) {
+            $this->notifyError('Project folder is missing on disk.');
+
+            return;
+        }
+
+        if (! $this->selectedThemeHasComposer() || ! $this->selectedThemeHasPackageJson()) {
+            $this->notifyError('The selected theme needs composer.json and package.json for Yarn tooling.');
+
+            return;
+        }
+
+        $this->regenerateLandoYaml();
+        $lando = app(LandoService::class);
+        $this->runAction(
+            'Yarn install',
+            $lando->toolingWithHeartbeat($this->site->path, 'theme-install', '[Lando Studio] yarn install in progress')
+        );
+    }
+
+    public function runThemeYarnDev(): void
+    {
+        if ($this->isProjectMissingOnDisk()) {
+            $this->notifyError('Project folder is missing on disk.');
+
+            return;
+        }
+
+        if (! $this->selectedThemeHasComposer() || ! $this->selectedThemeHasPackageJson()) {
+            $this->notifyError('The selected theme needs composer.json and package.json for Yarn tooling.');
+
+            return;
+        }
+
+        $this->regenerateLandoYaml();
+        $lando = app(LandoService::class);
+        $this->runAction('Yarn dev', $lando->tooling($this->site->path, 'dev'));
+    }
+
     public function showChangePassword(): void
     {
         if ($this->isProjectMissingOnDisk()) {
@@ -418,15 +537,21 @@ class SiteDashboard extends Component
         $generator = app(LandoYamlGenerator::class);
         $dbPort = $this->site->db_port;
         if ($dbPort === null) {
-            $dbPort = app(SiteManager::class)->allocateDatabaseForwardPort();
+            $dbPort = app(SiteManager::class)->allocateDatabaseForwardPort($this->site->path);
             $this->site->update(['db_port' => $dbPort]);
             $this->site->refresh();
         }
+        $themeSlug = trim($this->activeTheme);
+        if ($themeSlug === '') {
+            $themeSlug = trim((string) ($this->site->theme_name ?? ''));
+        }
+
         $generator->write($this->site->name, $this->site->path, [
             'php_version' => $this->site->php_version,
             'db_version' => $this->site->db_version,
             'redis_version' => $this->site->redis_version,
             'db_port' => $dbPort,
+            'theme_slug' => $themeSlug,
         ]);
     }
 
@@ -445,6 +570,8 @@ class SiteDashboard extends Component
         $this->activeTheme = $themeName;
         $this->site->update(['theme_name' => $themeName]);
         $this->site->refresh();
+
+        $this->regenerateLandoYaml();
 
         $lando = app(LandoService::class);
         $this->runAction('Activating theme', $lando->wpThemeActivate($this->site->path, $themeName));

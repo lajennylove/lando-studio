@@ -149,6 +149,48 @@ class LandoService
         return "cd {$escapedPath} && {$lando} composer install --working-dir=/app/{$subdir}";
     }
 
+    /**
+     * Composer in a mounted subdirectory (theme), with a log heartbeat so the dashboard
+     * idle timer does not treat silent Composer output as an early completion.
+     */
+    public function composerInstallWithHeartbeat(string $path, string $subdir): string
+    {
+        return $this->composerWorkingDirWithHeartbeat($path, $subdir, 'install', '[Lando Studio] Composer install in progress');
+    }
+
+    public function composerUpdateWithHeartbeat(string $path, string $subdir): string
+    {
+        return $this->composerWorkingDirWithHeartbeat($path, $subdir, 'update', '[Lando Studio] Composer update in progress');
+    }
+
+    private function composerWorkingDirWithHeartbeat(string $path, string $subdir, string $verb, string $heartbeatMessage): string
+    {
+        $escapedPath = $this->escapePath($path);
+        $lando = $this->getLandoPath();
+        $cmd = "cd {$escapedPath} && {$lando} composer {$verb} --working-dir=/app/{$subdir}";
+
+        return $this->platform->isWindows()
+            ? $cmd
+            : $this->withHeartbeat($heartbeatMessage, $cmd);
+    }
+
+    /**
+     * Run a Lando tooling command defined in .lando.yml (e.g. theme-install, dev).
+     */
+    public function tooling(string $path, string $toolAndArgs): string
+    {
+        return $this->buildCommand($path, $toolAndArgs);
+    }
+
+    public function toolingWithHeartbeat(string $path, string $toolAndArgs, string $heartbeatMessage): string
+    {
+        $cmd = $this->buildCommand($path, $toolAndArgs);
+
+        return $this->platform->isWindows()
+            ? $cmd
+            : $this->withHeartbeat($heartbeatMessage, $cmd);
+    }
+
     public function yarn(string $path, string $subdir, ?string $command = null): string
     {
         $yarnCmd = $command ? "yarn {$command}" : 'yarn';

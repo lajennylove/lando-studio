@@ -45,6 +45,7 @@ trait WithCommandExecution
         $this->steps = array_map(fn ($s) => [
             'label' => $s['label'],
             'hint' => $s['hint'] ?? null,
+            'group' => $s['group'] ?? null,
             'timeout' => $s['timeout'] ?? 600,
             'status' => 'pending',
             'output' => '',

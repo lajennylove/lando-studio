@@ -15,6 +15,8 @@ class SiteManager
         private LandoService $lando,
         private LandoYamlGenerator $yamlGenerator,
         private SshService $ssh,
+        private DatabasePortAllocator $ports,
+        private LandoYamlPortEditor $portEditor,
     ) {}
 
     /**
@@ -50,20 +52,14 @@ class SiteManager
             return;
         }
 
-        if (! $this->isPortBound($currentPort)) {
+        if (! $this->ports->isBound($currentPort)) {
             return;
         }
 
-        // Find the next free port
-        $newPort = $currentPort + 1;
-        while ($this->isPortBound($newPort)) {
-            $newPort++;
-        }
+        // Same rule as creating a site: a port no other project claims and nothing is listening on
+        $newPort = $this->ports->allocate($site->path);
 
-        // Rewrite only the portforward line inside the database: block
-        $content = file_get_contents($yamlPath);
-        $content = $this->replaceDbPortInYaml($content, $currentPort, $newPort);
-        file_put_contents($yamlPath, $content);
+        $this->portEditor->setDatabasePort($yamlPath, $newPort);
 
         // Persist the new port in the database record
         $site->db_port = $newPort;
@@ -71,64 +67,12 @@ class SiteManager
     }
 
     /**
-     * Check whether a TCP port is currently bound on localhost.
+     * Lowest database port no other project publishes and nothing is listening on (avoids Docker bind conflicts).
+     * Pass the project's path when re-allocating an existing project so its own claims are ignored.
      */
-    private function isPortBound(int $port): bool
+    public function allocateDatabaseForwardPort(?string $projectPath = null): int
     {
-        $sock = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.3);
-        if ($sock !== false) {
-            fclose($sock);
-
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Replace the portforward integer value in the database: service block only,
-     * leaving the cache: service's "portforward: true" untouched.
-     */
-    private function replaceDbPortInYaml(string $content, int $oldPort, int $newPort): string
-    {
-        // Find the database: service block (2-space indented service key)
-        $dbStart = strpos($content, "\n  database:\n");
-        if ($dbStart === false) {
-            return $content;
-        }
-
-        // Find where the next sibling service starts (same 2-space indent level)
-        $afterDb = $dbStart + strlen("\n  database:\n");
-        if (preg_match('/\n  [a-zA-Z]/', $content, $m, PREG_OFFSET_CAPTURE, $afterDb)) {
-            $nextService = $m[0][1];
-        } else {
-            $nextService = strlen($content);
-        }
-
-        // Replace portforward: <integer> only within the database block
-        $dbBlock = substr($content, $dbStart, $nextService - $dbStart);
-        $dbBlock = preg_replace(
-            '/(\n\s+portforward:\s*)'.preg_quote((string) $oldPort, '/').'(?=\s|$)/',
-            '${1}'.$newPort,
-            $dbBlock
-        );
-
-        return substr($content, 0, $dbStart).$dbBlock.substr($content, $nextService);
-    }
-
-    /**
-     * Next unique host port for database portforward in .lando.yml (avoids Docker bind conflicts).
-     */
-    public function allocateDatabaseForwardPort(): int
-    {
-        $start = (int) config('lando_dev.defaults.database_forward_port_start', 32_787);
-        $maxExisting = Site::query()->max('db_port');
-
-        if ($maxExisting === null) {
-            return $start;
-        }
-
-        return max($start, (int) $maxExisting + 1);
+        return $this->ports->allocate($projectPath);
     }
 
     public function createNewSite(string $name, string $adminUser, string $adminPass, string $adminEmail, ?string $path = null, bool $installSage = true): Site
@@ -147,8 +91,12 @@ class SiteManager
         }
 
         $versions = $this->resolvedLandoVersions();
-        $dbPort = $this->allocateDatabaseForwardPort();
-        $this->yamlGenerator->write($slug, $sitePath, array_merge($versions, ['db_port' => $dbPort]));
+        $dbPort = $this->allocateDatabaseForwardPort($sitePath);
+        $themeSlugForYaml = $installSage ? $slug : '';
+        $this->yamlGenerator->write($slug, $sitePath, array_merge($versions, [
+            'db_port' => $dbPort,
+            'theme_slug' => $themeSlugForYaml,
+        ]));
 
         // Create .nvmrc for Node version consistency
         file_put_contents($sitePath.DIRECTORY_SEPARATOR.'.nvmrc', "22\n");
@@ -247,8 +195,12 @@ class SiteManager
         }
 
         $versions = $this->resolvedLandoVersions();
-        $dbPort = $this->allocateDatabaseForwardPort();
-        $this->yamlGenerator->write($slug, $sitePath, array_merge($versions, ['db_port' => $dbPort]));
+        $dbPort = $this->allocateDatabaseForwardPort($sitePath);
+        $themeSlugForYaml = trim((string) ($remoteSite->theme_name ?? ''));
+        $this->yamlGenerator->write($slug, $sitePath, array_merge($versions, [
+            'db_port' => $dbPort,
+            'theme_slug' => $themeSlugForYaml,
+        ]));
 
         return Site::create([
             'name' => $slug,
@@ -285,6 +237,7 @@ class SiteManager
             ],
             [
                 'label' => 'Dumping remote database',
+                'group' => 'Database Setup',
                 'hint' => 'Streams SQL over SSH then compresses locally — nothing is written on the remote server. Expect 2–10 minutes depending on database size.',
                 'timeout' => 1200,
                 'command' => $this->ssh->buildMysqldumpCommand($remoteSite, $dumpFile),
@@ -292,26 +245,31 @@ class SiteManager
             ],
             [
                 'label' => 'Validating dump file',
+                'group' => 'Database Setup',
                 'command' => $this->validateDumpFileCommand($dumpFile),
                 'step' => 4,
             ],
             [
                 'label' => 'Importing database',
+                'group' => 'Database Setup',
                 'command' => $this->lando->dbImport($path, 'dumpfile.sql.gz'),
                 'step' => 5,
             ],
             [
                 'label' => 'Creating WordPress config',
+                'group' => 'Database Setup',
                 'command' => $this->cloneWpConfigCommand($path, $site),
                 'step' => 6,
             ],
             [
                 'label' => 'Cleaning up dump file',
+                'group' => 'Database Setup',
                 'command' => $this->removeDumpFileCommand($dumpFile),
                 'step' => 7,
             ],
             [
                 'label' => 'Replacing domain references',
+                'group' => 'Database Setup',
                 'hint' => 'Search-Replace prod-url for localdev-url.',
                 'timeout' => 1200,
                 'command' => $this->lando->wpSearchReplaceImported($path, "https://{$name}.lndo.site", $remoteSite->theme_name ?: null),

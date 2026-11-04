@@ -19,7 +19,16 @@ class MysqlDumpTablePrefixDetectorTest extends TestCase
 
     public function test_detects_custom_prefix(): void
     {
-        $sql = 'CREATE TABLE `acme_options` (`option_id` bigint(20));';
+        // A real dump has a header before the first table; the detector rejects files under 100 bytes.
+        $sql = "-- MariaDB dump 10.19  Distrib 10.11.11-MariaDB\n"
+            ."-- Host: localhost    Database: wordpress\n"
+            ."-- ------------------------------------------------------\n\n"
+            ."DROP TABLE IF EXISTS `acme_options`;\n"
+            ."CREATE TABLE `acme_options` (\n"
+            ."  `option_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"
+            ."  `option_name` varchar(191) NOT NULL DEFAULT '',\n"
+            ."  PRIMARY KEY (`option_id`)\n"
+            .") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n";
         $path = $this->tempGzip($sql);
         $this->assertSame('acme_', MysqlDumpTablePrefixDetector::fromGzipFile($path));
         unlink($path);

@@ -21,10 +21,11 @@
         @else
             <div class="flex items-center justify-between mb-4">
                 <flux:text class="text-sm text-zinc-500 dark:text-zinc-400">
-                    {{ count($candidates) }} {{ Str::plural('site', count($candidates)) }} found · Importing adds them to the sidebar without modifying any files on disk.
+                    {{ count($candidates) }} {{ Str::plural('site', count($candidates)) }} found · Importing adds them to the sidebar. A site whose database port clashes with another project gets a free port written to its .lando.yml and is rebuilt with <code class="font-mono text-xs">lando rebuild -y</code>.
                 </flux:text>
                 <flux:button
                     wire:click="importAll"
+                    :disabled="$rebuildRunning"
                     wire:loading.attr="disabled"
                     wire:target="importAll"
                     variant="primary"
@@ -77,6 +78,7 @@
                                 <td class="px-4 py-3 text-right">
                                     <flux:button
                                         wire:click="import('{{ $site['name'] }}')"
+                                        :disabled="$rebuildRunning"
                                         wire:loading.attr="disabled"
                                         wire:target="import('{{ $site['name'] }}')"
                                         size="sm"
@@ -91,6 +93,26 @@
                         @endforeach
                     </tbody>
                 </table>
+            </div>
+        @endif
+
+        @if($rebuildRunning || $rebuildOutput !== '')
+            <div class="mt-8" @if($rebuildRunning) wire:poll.2s="pollRebuild" @endif>
+                <div class="flex items-center gap-2 mb-3">
+                    <flux:heading size="sm">Applying port changes</flux:heading>
+                    @if($rebuildRunning)
+                        <flux:text class="text-sm text-zinc-500 dark:text-zinc-400">Running <code class="font-mono text-xs">lando rebuild -y</code>…</flux:text>
+                    @endif
+                </div>
+                <div class="bg-zinc-900 text-green-400 font-mono text-xs p-4 rounded-lg h-72 overflow-y-auto">
+                    @if($rebuildOutput !== '')
+                        @foreach(explode("\n", $rebuildOutput) as $line)
+                            <span class="block terminal-line">{!! $line === '' ? '&nbsp;' : \App\Support\AnsiToHtml::lineToHtml($line) !!}</span>
+                        @endforeach
+                    @else
+                        <span class="text-zinc-600 dark:text-zinc-500">Waiting for output…</span>
+                    @endif
+                </div>
             </div>
         @endif
     </div>

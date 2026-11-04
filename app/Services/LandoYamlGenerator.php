@@ -11,8 +11,14 @@ class LandoYamlGenerator
     {
         $stub = file_get_contents(resource_path('stubs/lando.yml.stub'));
 
+        $themeSlug = trim((string) ($options['theme_slug'] ?? ''));
+        if ($themeSlug === '') {
+            $themeSlug = 'twentytwentyfive';
+        }
+
         $replacements = [
             '{{SITE_NAME}}' => $siteName,
+            '{{THEME_SLUG}}' => $themeSlug,
             '{{PHP_VERSION}}' => $options['php_version'] ?? config('lando_dev.defaults.php_version'),
             '{{DB_VERSION}}' => $options['db_version'] ?? config('lando_dev.defaults.db_version'),
             '{{REDIS_VERSION}}' => $options['redis_version'] ?? config('lando_dev.defaults.redis_version'),

@@ -42,6 +42,13 @@ npm install
 npm run build
 ```
 
+> **Windows: symlinks.** `.cursorrules` and `.github/copilot-instructions.md` are symlinks to [`CLAUDE.md`](CLAUDE.md). Git on Windows only creates real symlinks when symlink support is enabled. Otherwise both files are checked out as plain text containing the target path, and Cursor and Copilot will not see the instructions. Before cloning, either:
+>
+> - turn on **Developer Mode** (Settings → System → For developers), then run `git config --global core.symlinks true`, or
+> - clone with `git clone -c core.symlinks=true ...`.
+>
+> If you already cloned without symlink support, enable one of the above and clone again.
+
 Start the web stack (browser / API only):
 
 ```bash

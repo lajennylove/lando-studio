@@ -58,9 +58,35 @@
         <flux:button wire:click="rebuildSite" size="sm" icon="wrench" :disabled="$actionRunning || $this->isProjectMissingOnDisk()">
             Rebuild
         </flux:button>
-        <flux:button wire:click="openInFinder" size="sm" icon="folder-open" :disabled="$actionRunning || $this->isProjectMissingOnDisk()">
-            Open Folder
-        </flux:button>
+        @if(!$this->isProjectMissingOnDisk() && $this->selectedThemeHasComposer())
+            <flux:button
+                wire:click="runThemeComposerDeps"
+                size="sm"
+                icon="cube-transparent"
+                :disabled="$actionRunning || $isExecuting"
+            >
+                {{ $this->selectedThemeHasVendor() ? 'Composer update' : 'Composer install' }}
+            </flux:button>
+        @endif
+        @if(!$this->isProjectMissingOnDisk() && $this->selectedThemeHasComposer() && $this->selectedThemeHasPackageJson())
+            <flux:button
+                wire:click="runThemeYarnInstall"
+                size="sm"
+                icon="arrow-down-tray"
+                :disabled="$actionRunning || $isExecuting"
+            >
+                Yarn install
+            </flux:button>
+            <flux:button
+                wire:click="runThemeYarnDev"
+                size="sm"
+                icon="bolt"
+                variant="filled"
+                :disabled="$actionRunning || $isExecuting"
+            >
+                Yarn dev
+            </flux:button>
+        @endif
         <flux:button wire:click="confirmDestroy" variant="danger" size="sm" icon="trash" :disabled="$actionRunning || $isExecuting">
             Destroy
         </flux:button>

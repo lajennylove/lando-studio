@@ -63,11 +63,14 @@ final class ApplicationDatabaseReset
             $resolvedPaths[realpath($path) ?: $path] = true;
         }
 
-        $internalPath = config('nativephp-internal.database_path');
-        $candidates = array_unique(array_filter([
-            database_path('nativephp.sqlite'),
-            is_string($internalPath) && $internalPath !== '' ? $internalPath : null,
-        ]));
+        // Overridable so tests can exclude the real app database file (see ApplicationDatabaseResetTest).
+        $candidates = array_unique(array_filter(
+            config('lando_dev.extra_sqlite_paths') ?? [
+                database_path('nativephp.sqlite'),
+                config('nativephp-internal.database_path'),
+            ],
+            fn (mixed $path) => is_string($path) && $path !== ''
+        ));
 
         $i = 0;
         foreach ($candidates as $filePath) {
