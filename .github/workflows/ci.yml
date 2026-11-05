@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  php-tests:
+    name: PHP tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3, zip, bcmath, curl, fileinfo
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Prepare .env
+        run: |
+          cp .env.example .env
+          php artisan key:generate --force
+          php artisan config:clear
+
+      - name: Create SQLite database
+        run: touch database/database.sqlite
+
+      - name: Run tests
+        run: php artisan test
+
+  pint:
+    name: Pint format check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3, zip, bcmath, curl, fileinfo
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Check formatting
+        run: ./vendor/bin/pint --test
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        # Same approach as the build-*.yml workflows: the lockfile is generated
+        # on macOS and may lack the Linux rollup optional binary, which breaks
+        # npm ci. Delete it and let npm resolve platform packages fresh.
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install
+
+      - name: Build frontend assets
+        run: npm run build
