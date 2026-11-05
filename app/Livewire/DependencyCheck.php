@@ -37,29 +37,51 @@ class DependencyCheck extends Component
         $checker = app(DependencyChecker::class);
         $platform = app(PlatformDetector::class);
 
-        $this->dependencies = [
-            'lando' => [
-                'installed' => $checker->isLandoInstalled(),
-                'version' => $checker->getLandoVersion(),
-                'label' => 'Lando',
-                'description' => 'Container-based local development environment',
-                'required' => true,
-            ],
-            'docker' => [
-                'installed' => $checker->isDockerInstalled(),
-                'version' => $checker->getDockerVersion(),
-                'label' => 'Docker Desktop',
-                'description' => 'Container runtime engine',
-                'required' => true,
-            ],
-            'lando-plugins' => [
-                'installed' => $checker->isLandoSetupComplete(),
+        $this->dependencies = [];
+
+        // Windows order: WSL2 and PuTTY first, then Docker, then Lando. lando setup needs Docker,
+        // so the app installs Docker itself (with the right architecture) before Lando runs.
+        if ($platform->isWindows()) {
+            $this->dependencies['wsl'] = [
+                'installed' => $checker->isWslInstalled(),
                 'version' => null,
-                'label' => 'Lando Plugins',
-                'description' => 'WordPress recipe and common plugins (run lando setup)',
+                'label' => 'WSL2',
+                'description' => 'Linux subsystem that Docker Desktop and Lando run on. Installing it needs admin rights and may need a restart.',
                 'required' => true,
-                'install_action' => 'runLandoSetup',
-            ],
+            ];
+
+            $this->dependencies['putty'] = [
+                'installed' => $checker->isPuttyInstalled(),
+                'version' => $checker->getPuttyVersion(),
+                'label' => 'PuTTY',
+                'description' => 'Required for SSH connections to remote sites',
+                'required' => true,
+            ];
+        }
+
+        $this->dependencies['lando'] = [
+            'installed' => $checker->isLandoInstalled(),
+            'version' => $checker->getLandoVersion(),
+            'label' => 'Lando',
+            'description' => 'Container-based local development environment',
+            'required' => true,
+        ];
+
+        $this->dependencies['docker'] = [
+            'installed' => $checker->isDockerInstalled(),
+            'version' => $checker->getDockerVersion(),
+            'label' => 'Docker Desktop',
+            'description' => 'Container runtime engine',
+            'required' => true,
+        ];
+
+        $this->dependencies['lando-plugins'] = [
+            'installed' => $checker->isLandoSetupComplete(),
+            'version' => null,
+            'label' => 'Lando Plugins',
+            'description' => 'WordPress recipe and common plugins (run lando setup)',
+            'required' => true,
+            'install_action' => 'runLandoSetup',
         ];
 
         if ($platform->isMacAppleSilicon()) {
@@ -68,16 +90,6 @@ class DependencyCheck extends Component
                 'version' => $checker->getOrbStackVersion(),
                 'label' => 'OrbStack',
                 'description' => 'Fast Docker alternative for Apple Silicon (optional)',
-                'required' => false,
-            ];
-        }
-
-        if ($platform->isWindows()) {
-            $this->dependencies['putty'] = [
-                'installed' => $checker->isPuttyInstalled(),
-                'version' => $checker->getPuttyVersion(),
-                'label' => 'PuTTY',
-                'description' => 'Required for SSH password auth when cloning remote sites',
                 'required' => false,
             ];
         }

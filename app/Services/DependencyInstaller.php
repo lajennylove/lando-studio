@@ -15,6 +15,7 @@ class DependencyInstaller
             'docker' => $this->installDocker(),
             'orbstack' => $this->installOrbStack(),
             'putty' => $this->installPutty(),
+            'wsl' => $this->installWsl(),
             default => throw new \InvalidArgumentException("Unknown dependency: {$dependency}"),
         };
     }
@@ -23,8 +24,17 @@ class DependencyInstaller
     {
         if ($this->platform->isWindows()) {
             // $env:NONINTERACTIVE=1 suppresses all prompts (equivalent to -Yes flag).
-            // setup-lando.ps1 installs to %USERPROFILE%\.lando\bin\lando.exe by default.
-            return '$env:NONINTERACTIVE=1; iex (irm \'https://get.lando.dev/setup-lando.ps1\' -UseB)';
+            // Lando's published setup-lando.ps1 (v3.7.5) has a broken ARM64 check ("elseif ($arch = == ...")
+            // and then runs the arm64 CLI, which does not start on Windows ARM64. Patch those two spots
+            // in memory before running it, so the x64 CLI is installed (it runs under emulation).
+            // Remove this patch once Lando fixes the script and the arm64 CLI.
+            return implode('; ', [
+                '$env:NONINTERACTIVE=1',
+                '$s = (Invoke-RestMethod -Uri \'https://get.lando.dev/setup-lando.ps1\' -UseBasicParsing)',
+                '$s = $s -replace \'elseif \(\$arch = == "ARM64"\)\', \'elseif ($arch -eq "ARM64")\'',
+                '$s = $s -replace \'(?m)^\$SYSTEM_ARCHITECTURE = Get-SystemArchitecture\', \'$$SYSTEM_ARCHITECTURE = "x64"\'',
+                'Invoke-Expression $s',
+            ]);
         }
 
         // The setup-lando.sh script handles macOS and all major Linux distros.
@@ -87,6 +97,27 @@ class DependencyInstaller
             'Remove-Item $msi -Force -ErrorAction SilentlyContinue',
             'Write-Output "[Lando Studio] PuTTY installed. plink.exe is in: $env:ProgramFiles\PuTTY\"',
         ]);
+    }
+
+    /**
+     * Installs WSL2 on Windows: turns on the Virtual Machine Platform and Linux subsystem features,
+     * then installs the WSL package. Both need admin rights, so the work runs in an elevated
+     * PowerShell (Windows shows its UAC prompt). That process writes its own log, since its output
+     * does not come back here. If Windows asks for a restart, the log says so.
+     */
+    public function installWsl(): string
+    {
+        $log = storage_path('logs/install_wsl.log');
+        $inner = implode('; ', [
+            '$a = 0; $b = 0',
+            'dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null; $a = $LASTEXITCODE',
+            'dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null; $b = $LASTEXITCODE',
+            'winget install --id Microsoft.WSL -e --silent --accept-package-agreements --accept-source-agreements',
+            'if ($a -eq 3010 -or $b -eq 3010) { Write-Output "[Lando Studio] WSL2 is installed. Restart Windows to finish, then reopen Lando Studio." } else { Write-Output "[Lando Studio] WSL2 is installed." }',
+        ]);
+        $inner .= ' *> \''.$log.'\'';
+
+        return "Start-Process powershell -Verb RunAs -Wait -ArgumentList @('-NoProfile', '-Command', '".str_replace("'", "''", $inner)."')";
     }
 
     /**

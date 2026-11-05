@@ -24,7 +24,19 @@ class DependencyChecker
 
     public function allRequiredInstalled(): bool
     {
-        return $this->isLandoInstalled() && $this->isDockerInstalled() && $this->isLandoSetupComplete();
+        $windowsRequirements = ! $this->platform->isWindows() || ($this->isWslInstalled() && $this->isPuttyInstalled());
+
+        return $windowsRequirements && $this->isLandoInstalled() && $this->isDockerInstalled() && $this->isLandoSetupComplete();
+    }
+
+    /**
+     * Whether the WSL package is installed on Windows. Docker Desktop needs WSL2, and Lando uses it too.
+     * The package installs its program folder; the stub wsl.exe in System32 exists even when it is not
+     * installed, so the program folder is the check. Turning the Windows features on may still need a restart.
+     */
+    public function isWslInstalled(): bool
+    {
+        return $this->platform->isWindows() && file_exists('C:\\Program Files\\WSL\\wsl.exe');
     }
 
     public function isLandoInstalled(): bool
