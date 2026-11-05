@@ -1,0 +1,437 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (semver x.y.z, optional -suffix such as -beta.1). Used as the tag v<version>.'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel. beta marks the GitHub Release as a pre-release.'
+        required: true
+        default: 'stable'
+        type: choice
+        options:
+          - stable
+          - beta
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+
+    steps:
+      - name: Resolve version, tag and channel
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ]; then
+            RAW="$REF_NAME"
+          else
+            RAW="$INPUT_VERSION"
+          fi
+          TAG="v${RAW#v}"
+          VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version '$VERSION' is not semver (x.y.z with an optional -suffix)."
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "push" ]; then
+            CHANNEL=stable
+            if [[ "$TAG" == *-beta* ]]; then CHANNEL=beta; fi
+          else
+            CHANNEL="$INPUT_CHANNEL"
+          fi
+          PRERELEASE=false
+          if [ "$CHANNEL" = "beta" ] || [[ "$TAG" == *-beta* ]]; then PRERELEASE=true; fi
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG version=$VERSION channel=$CHANNEL prerelease=$PRERELEASE"
+
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest is Apple Silicon (arm64).
+          - runner: macos-latest
+            arch: arm64
+          # Intel (x64) runner. macos-13 was retired by GitHub in Dec 2025, so
+          # the last Intel image is macos-15-intel. Verify against the live
+          # runner list before relying on it.
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      # Fails the job before any build work if a signing or notarization secret
+      # is missing or still the REPLACE_ME placeholder, so an unsigned or
+      # unnotarized macOS build cannot reach the release job. Only variable
+      # names are printed.
+      - name: Check macOS signing and notarization secrets
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          NATIVEPHP_APPLE_ID: ${{ secrets.NATIVEPHP_APPLE_ID }}
+          NATIVEPHP_APPLE_ID_PASS: ${{ secrets.NATIVEPHP_APPLE_ID_PASS }}
+          NATIVEPHP_APPLE_TEAM_ID: ${{ secrets.NATIVEPHP_APPLE_TEAM_ID }}
+        run: |
+          missing=0
+          for name in CSC_LINK CSC_KEY_PASSWORD NATIVEPHP_APPLE_ID NATIVEPHP_APPLE_ID_PASS NATIVEPHP_APPLE_TEAM_ID; do
+            value="${!name:-}"
+            if [ -z "$value" ] || [ "$value" = "REPLACE_ME" ]; then
+              echo "::error::Required secret $name is empty or still REPLACE_ME. Refusing to build an unsigned or unnotarized macOS release."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "All macOS signing and notarization secrets are set."
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3, zip, bcmath, curl, fileinfo
+          tools: composer:v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Composer dependencies
+        run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Install Node dependencies
+        # Delete package-lock.json so npm resolves platform-specific optional
+        # packages (e.g. @rollup/rollup-darwin-arm64) fresh for this runner.
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install
+
+      - name: Prepare .env
+        run: |
+          cp .env.example .env
+          php artisan key:generate --force
+          php artisan config:clear
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Create SQLite database
+        run: |
+          touch database/database.sqlite
+          php artisan migrate --force
+
+      - name: Build macOS app (signed and notarized)
+        env:
+          NATIVEPHP_APP_ID: com.landostudio.app
+          NATIVEPHP_APP_VERSION: ${{ needs.prepare.outputs.version }}
+          NATIVEPHP_UPDATER_ENABLED: 'false'
+          APP_ENV: production
+          APP_DEBUG: 'false'
+          APP_URL: http://localhost
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          NATIVEPHP_APPLE_ID: ${{ secrets.NATIVEPHP_APPLE_ID }}
+          NATIVEPHP_APPLE_ID_PASS: ${{ secrets.NATIVEPHP_APPLE_ID_PASS }}
+          NATIVEPHP_APPLE_TEAM_ID: ${{ secrets.NATIVEPHP_APPLE_TEAM_ID }}
+        run: php artisan native:build mac ${{ matrix.arch }} -v
+
+      - name: Find build output
+        run: |
+          echo "=== Searching for .dmg / .zip files ==="
+          find . -name "*.dmg" -o -name "*.zip" 2>/dev/null | grep -v node_modules | grep -v vendor || true
+          echo "=== dist/ contents ==="
+          ls -lh dist/ 2>/dev/null || echo "dist/ does not exist"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lando-Studio-${{ needs.prepare.outputs.version }}-macos-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  build-linux:
+    name: Build Linux (x64)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        # electron-builder requires these libs to package Electron on Linux
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            libnotify-dev \
+            libnss3 \
+            libxss1 \
+            libxtst6 \
+            xauth \
+            xvfb \
+            rpm \
+            fakeroot \
+            dpkg
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3, zip, bcmath, curl, fileinfo
+          tools: composer:v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Composer dependencies
+        run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Install Node dependencies
+        # Delete package-lock.json so npm resolves platform-specific optional
+        # packages (e.g. @rollup/rollup-linux-x64-gnu) fresh for this runner.
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install
+
+      - name: Prepare .env
+        run: |
+          cp .env.example .env
+          php artisan key:generate --force
+          php artisan config:clear
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Create SQLite database
+        run: |
+          touch database/database.sqlite
+          php artisan migrate --force
+
+      - name: Build Linux app
+        env:
+          NATIVEPHP_APP_ID: com.landostudio.app
+          NATIVEPHP_APP_VERSION: ${{ needs.prepare.outputs.version }}
+          NATIVEPHP_UPDATER_ENABLED: 'false'
+          APP_ENV: production
+          APP_DEBUG: 'false'
+          APP_URL: http://localhost
+        run: php artisan native:build linux x64 -v
+
+      - name: Find build output
+        run: |
+          echo "=== Searching for .AppImage / .deb / .rpm files ==="
+          find . \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) 2>/dev/null | grep -v node_modules | grep -v vendor || true
+          echo "=== dist/ contents ==="
+          ls -lh dist/ 2>/dev/null || echo "dist/ does not exist"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lando-Studio-${{ needs.prepare.outputs.version }}-linux-x64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows:
+    name: Build Windows (x64)
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3, zip, bcmath, curl, fileinfo
+          tools: composer:v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Composer dependencies
+        run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Install Node dependencies
+        # The package-lock.json is generated on macOS so it doesn't include the
+        # Windows-specific @rollup/rollup-win32-x64-msvc optional binary.
+        # Deleting both node_modules and package-lock.json forces npm to resolve
+        # all optional dependencies fresh for the current platform.
+        shell: pwsh
+        run: |
+          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
+          if (Test-Path package-lock.json) { Remove-Item -Force package-lock.json }
+          npm install
+
+      - name: Prepare .env
+        shell: pwsh
+        run: |
+          Copy-Item .env.example .env
+          php artisan key:generate --force
+          php artisan config:clear
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Create SQLite database
+        shell: pwsh
+        run: |
+          New-Item -ItemType File -Force database\database.sqlite
+          php artisan migrate --force
+
+      - name: Configure Azure code signing (optional)
+        # Signing is optional for now. When any Azure Trusted Signing value is
+        # missing, this step warns and the build continues unsigned.
+        shell: pwsh
+        env:
+          NATIVEPHP_AZURE_PUBLISHER_NAME: ${{ secrets.NATIVEPHP_AZURE_PUBLISHER_NAME }}
+          NATIVEPHP_AZURE_ENDPOINT: ${{ secrets.NATIVEPHP_AZURE_ENDPOINT }}
+          NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME }}
+          NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ secrets.NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $required = @(
+            'NATIVEPHP_AZURE_PUBLISHER_NAME',
+            'NATIVEPHP_AZURE_ENDPOINT',
+            'NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME',
+            'NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME',
+            'AZURE_TENANT_ID',
+            'AZURE_CLIENT_ID',
+            'AZURE_CLIENT_SECRET'
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -eq 0) {
+            foreach ($name in $required) {
+              # Written to GITHUB_ENV so the build step receives them. The
+              # runner masks secret values in logs.
+              Add-Content -Path $env:GITHUB_ENV -Value "$name=$([Environment]::GetEnvironmentVariable($name))"
+            }
+            Write-Host "Azure Trusted Signing is configured. The Windows build will be signed."
+          } else {
+            Write-Host "::warning::Azure signing skipped. Missing: $($missing -join ', '). The Windows build will be UNSIGNED."
+          }
+
+      - name: Build Windows app
+        shell: pwsh
+        env:
+          NATIVEPHP_APP_ID: com.landostudio.app
+          NATIVEPHP_APP_VERSION: ${{ needs.prepare.outputs.version }}
+          NATIVEPHP_UPDATER_ENABLED: 'false'
+          APP_ENV: production
+          APP_DEBUG: 'false'
+          APP_URL: http://localhost
+        run: php artisan native:build win x64 -v
+
+      - name: Find build output
+        shell: pwsh
+        run: |
+          Write-Host "=== Searching for installer files ==="
+          Get-ChildItem -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object FullName, Length
+          Get-ChildItem -Recurse -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object FullName, Length
+          Write-Host "=== dist/ contents (if exists) ==="
+          if (Test-Path dist) { Get-ChildItem -Recurse dist | Select-Object FullName }
+          else { Write-Host "dist/ does not exist" }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lando-Studio-${{ needs.prepare.outputs.version }}-windows-x64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Create GitHub Release
+    needs: [prepare, build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      EVENT_NAME: ${{ github.event_name }}
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Lando-Studio-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(find release-assets -type f)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::No build artifacts were downloaded. Nothing to release."
+            exit 1
+          fi
+          printf 'Assets:\n'
+          printf '  %s\n' "${FILES[@]}"
+
+          ARGS=(--title "Lando Studio $VERSION" --generate-notes)
+          if [ "$PRERELEASE" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+          # --target only applies when the tag does not exist yet (dispatch).
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            ARGS+=(--target "$GITHUB_SHA")
+          fi
+
+          gh release create "$TAG" "${ARGS[@]}" "${FILES[@]}"
+          echo "Created release $TAG (prerelease=$PRERELEASE)"
