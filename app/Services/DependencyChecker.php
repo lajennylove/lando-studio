@@ -56,6 +56,12 @@ class DependencyChecker
 
     public function isDockerInstalled(): bool
     {
+        // On macOS with OrbStack, Docker counts as installed only once /Applications/Docker.app
+        // exists: Lando 3 needs that path, and the install creates it as a link to OrbStack.
+        if (PHP_OS_FAMILY === 'Darwin' && $this->isOrbStackInstalled()) {
+            return is_link('/Applications/Docker.app') || file_exists('/Applications/Docker.app');
+        }
+
         if ($this->commandExists('docker')) {
             return true;
         }

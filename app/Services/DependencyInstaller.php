@@ -33,8 +33,8 @@ class DependencyInstaller
     public function installDocker(): string
     {
         return match ($this->platform->os()) {
-            // Bootstrap Homebrew first if absent, then install Docker Desktop cask.
-            'macos' => $this->withBrewBootstrap('brew install --cask docker'),
+            // macOS default engine is OrbStack (see installOrbStack).
+            'macos' => $this->installOrbStack(),
 
             // Official documented method from https://docs.docker.com/desktop/setup/install/windows-install/
             // PowerShell: detect arch, download installer, run silently.
@@ -54,10 +54,26 @@ class DependencyInstaller
         };
     }
 
+    /**
+     * OrbStack is the Docker engine on macOS. Lando 3 still requires /Applications/Docker.app to exist,
+     * so the install also links it to OrbStack. That needs admin rights: osascript shows macOS's own
+     * password prompt, so the app never receives the password. The setup screen explains this first.
+     */
     public function installOrbStack(): string
     {
-        // OrbStack is macOS-only; bootstrap Homebrew if needed.
-        return $this->withBrewBootstrap('brew install --cask orbstack');
+        return $this->withBrewBootstrap('brew install --cask orbstack').' && '.$this->linkDockerAppCommand();
+    }
+
+    /**
+     * Creates /Applications/Docker.app -> OrbStack only when nothing is there, so a real Docker Desktop
+     * install is never overwritten.
+     */
+    private function linkDockerAppCommand(): string
+    {
+        $link = '/Applications/Docker.app';
+        $create = 'ln -sfn /Applications/OrbStack.app '.$link;
+
+        return "if [ ! -e {$link} ] && [ ! -L {$link} ]; then osascript -e 'do shell script \"{$create}\" with administrator privileges'; fi";
     }
 
     /**

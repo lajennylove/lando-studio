@@ -48,21 +48,13 @@ class DependencyCheck extends Component
             'docker' => [
                 'installed' => $checker->isDockerInstalled(),
                 'version' => $checker->getDockerVersion(),
-                'label' => 'Docker Desktop',
-                'description' => 'Container runtime engine',
+                'label' => $platform->os() === 'macos' ? 'Docker engine (OrbStack)' : 'Docker Desktop',
+                'description' => $platform->os() === 'macos'
+                    ? 'Container runtime engine. macOS will ask for your password once to link /Applications/Docker.app, which Lando requires.'
+                    : 'Container runtime engine',
                 'required' => true,
             ],
         ];
-
-        if ($platform->isMacAppleSilicon()) {
-            $this->dependencies['orbstack'] = [
-                'installed' => $checker->isOrbStackInstalled(),
-                'version' => $checker->getOrbStackVersion(),
-                'label' => 'OrbStack',
-                'description' => 'Fast Docker alternative for Apple Silicon (optional)',
-                'required' => false,
-            ];
-        }
     }
 
     public function install(string $dependency): void
