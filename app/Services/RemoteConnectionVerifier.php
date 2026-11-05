@@ -14,6 +14,11 @@ use Illuminate\Support\Facades\Process;
  */
 final class RemoteConnectionVerifier
 {
+    public function __construct(
+        private PlatformDetector $platform,
+        private DependencyChecker $checker,
+    ) {}
+
     /**
      * @param  string|null  $sshPasswordOverride  Plain text; if null/empty, uses {@see RemoteSite::$ssh_password}
      * @param  string|null  $dbPasswordOverride  Plain text; if null/empty, uses {@see RemoteSite::$db_password}
@@ -23,6 +28,10 @@ final class RemoteConnectionVerifier
         ?string $sshPasswordOverride = null,
         ?string $dbPasswordOverride = null,
     ): RemoteVerificationResult {
+        // SSH + schema probes can take up to 120s combined; prevent PHP's
+        // max_execution_time (typically 30s) from killing the Livewire request.
+        set_time_limit(0);
+
         $sshPass = (is_string($sshPasswordOverride) && $sshPasswordOverride !== '')
             ? $sshPasswordOverride
             : (string) $remote->ssh_password;
@@ -51,16 +60,34 @@ final class RemoteConnectionVerifier
 
         $target = $remote->ssh_user.'@'.$remote->ssh_server_ip;
 
-        $sshProbe = Process::env(['SSHPASS' => $sshPass])
-            ->timeout(30)
-            ->run([
-                'sshpass', '-e', 'ssh', '-T',
-                '-o', 'StrictHostKeyChecking=no',
-                '-o', 'ConnectTimeout=20',
-                '-o', 'BatchMode=no',
-                $target,
-                'echo', 'LANDO_STUDIO_SSH_OK',
-            ]);
+        if ($this->platform->isWindows()) {
+            $plinkPath = $this->checker->getPlinkPath();
+            if (! $plinkPath) {
+                return RemoteVerificationResult::sshFailed(
+                    'PuTTY (plink.exe) is not installed. Install it from Settings > System Dependencies, then retry.'
+                );
+            }
+
+            // Plink prompts for host-key acceptance on first connect. On Windows
+            // it reads the prompt from the console (CONIN$), NOT from stdin pipes,
+            // so Symfony Process::input() cannot answer it. Wrapping in PowerShell
+            // with "echo y |" properly pipes through the shell. When the key is
+            // already cached the "y" is harmlessly ignored.
+            $sshProbe = Process::timeout(30)->run(
+                $this->plinkViaPowerShell($plinkPath, $sshPass, $target, 'echo LANDO_STUDIO_SSH_OK')
+            );
+        } else {
+            $sshProbe = Process::env(['SSHPASS' => $sshPass])
+                ->timeout(30)
+                ->run([
+                    'sshpass', '-e', 'ssh', '-T',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'ConnectTimeout=20',
+                    '-o', 'BatchMode=no',
+                    $target,
+                    'echo', 'LANDO_STUDIO_SSH_OK',
+                ]);
+        }
 
         $sshOut = $sshProbe->output().$sshProbe->errorOutput();
         $sshExitCode = $sshProbe->exitCode();
@@ -87,20 +114,34 @@ final class RemoteConnectionVerifier
             );
         }
 
-        $schemaProbe = Process::env(['SSHPASS' => $sshPass])
-            ->timeout(90)
-            ->run([
-                'sshpass', '-e', 'ssh', '-T',
-                '-o', 'StrictHostKeyChecking=no',
-                '-o', 'ConnectTimeout=20',
-                $target,
-                'mysqldump',
-                '--no-data',
-                '--single-transaction',
-                '-u', $remote->db_user,
-                '-p'.$dbPass,
-                $remote->db_name,
-            ]);
+        if ($this->platform->isWindows()) {
+            // plink joins remaining args as the remote command; pass as a single string
+            // so special chars in db_user/db_name are handled by the remote shell.
+            $dbCmd = sprintf(
+                'mysqldump --no-data --single-transaction -u %s -p%s %s',
+                escapeshellarg((string) $remote->db_user),
+                escapeshellarg($dbPass),
+                escapeshellarg((string) $remote->db_name),
+            );
+            $schemaProbe = Process::timeout(90)->run(
+                $this->plinkViaPowerShell($plinkPath, $sshPass, $target, $dbCmd)
+            );
+        } else {
+            $schemaProbe = Process::env(['SSHPASS' => $sshPass])
+                ->timeout(90)
+                ->run([
+                    'sshpass', '-e', 'ssh', '-T',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'ConnectTimeout=20',
+                    $target,
+                    'mysqldump',
+                    '--no-data',
+                    '--single-transaction',
+                    '-u', $remote->db_user,
+                    '-p'.$dbPass,
+                    $remote->db_name,
+                ]);
+        }
 
         $dbOut = $schemaProbe->output().$schemaProbe->errorOutput();
         $dbExitCode = $schemaProbe->exitCode();
@@ -136,5 +177,26 @@ final class RemoteConnectionVerifier
         Log::info('RemoteConnectionVerifier: verification passed');
 
         return RemoteVerificationResult::success();
+    }
+
+    /**
+     * Build a PowerShell command array that pipes "y" into plink to auto-accept
+     * host-key prompts. Returns an array suitable for Process::run().
+     *
+     * @return list<string>
+     */
+    private function plinkViaPowerShell(string $plinkPath, string $password, string $target, string $remoteCmd): array
+    {
+        $esc = static fn (string $v): string => str_replace("'", "''", $v);
+
+        $ps = sprintf(
+            "echo y | & '%s' -ssh -pw '%s' -T '%s' '%s'",
+            $esc($plinkPath),
+            $esc($password),
+            $esc($target),
+            $esc($remoteCmd),
+        );
+
+        return ['powershell', '-NoProfile', '-Command', $ps];
     }
 }

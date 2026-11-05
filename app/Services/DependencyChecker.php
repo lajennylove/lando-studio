@@ -24,7 +24,7 @@ class DependencyChecker
 
     public function allRequiredInstalled(): bool
     {
-        return $this->isLandoInstalled() && $this->isDockerInstalled();
+        return $this->isLandoInstalled() && $this->isDockerInstalled() && $this->isLandoSetupComplete();
     }
 
     public function isLandoInstalled(): bool
@@ -82,6 +82,87 @@ class DependencyChecker
             || (PHP_OS_FAMILY === 'Darwin' && is_dir('/Applications/OrbStack.app'));
     }
 
+    /**
+     * Whether PuTTY's plink.exe is available on Windows.
+     * plink is required for SSH password-based connections (clone/sync operations).
+     */
+    public function isPuttyInstalled(): bool
+    {
+        if ($this->commandExists('plink')) {
+            return true;
+        }
+
+        return $this->getPlinkPath() !== null;
+    }
+
+    /**
+     * Full path to plink.exe, or null if not found.
+     * Checks the standard PuTTY install locations when not in PATH.
+     */
+    public function getPlinkPath(): ?string
+    {
+        $candidates = [
+            'C:\\Program Files\\PuTTY\\plink.exe',
+            'C:\\Program Files (x86)\\PuTTY\\plink.exe',
+            getenv('LOCALAPPDATA').'\\Programs\\PuTTY\\plink.exe',
+        ];
+
+        foreach ($candidates as $path) {
+            if ($path && file_exists($path)) {
+                return $path;
+            }
+        }
+
+        // Also check PATH via `where`
+        $result = @shell_exec('where plink 2>nul');
+        if ($result) {
+            $first = trim(explode("\n", $result)[0]);
+            if ($first && file_exists($first)) {
+                return $first;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether winget (Windows Package Manager) is available.
+     * Some Windows builds (LTSC, stripped images, older 10 builds) don't ship it.
+     */
+    public function isWingetInstalled(): bool
+    {
+        return $this->platform->isWindows() && $this->commandExists('winget');
+    }
+
+    /**
+     * Whether `lando setup` has been run (common plugins are installed).
+     * Checks for the @lando/wordpress plugin which is required for site creation.
+     */
+    public function isLandoSetupComplete(): bool
+    {
+        $pluginDir = $this->getLandoPluginsDir();
+        if (! $pluginDir) {
+            return false;
+        }
+
+        return is_dir($pluginDir.DIRECTORY_SEPARATOR.'@lando'.DIRECTORY_SEPARATOR.'wordpress');
+    }
+
+    /**
+     * Resolve the Lando plugins directory (~/.lando/plugins).
+     */
+    private function getLandoPluginsDir(): ?string
+    {
+        $home = $this->platform->homeDir();
+        if (! $home) {
+            return null;
+        }
+
+        $dir = $home.DIRECTORY_SEPARATOR.'.lando'.DIRECTORY_SEPARATOR.'plugins';
+
+        return is_dir($dir) ? $dir : null;
+    }
+
     public function getLandoVersion(): ?string
     {
         // On Windows use the full path in case the child process PATH is frozen.
@@ -105,6 +186,23 @@ class DependencyChecker
     public function getOrbStackVersion(): ?string
     {
         return $this->getCommandOutput('orb version');
+    }
+
+    public function getPuttyVersion(): ?string
+    {
+        $plink = $this->getPlinkPath() ?? 'plink';
+        $result = $this->getCommandOutput('"'.$plink.'" -V');
+
+        if (! $result) {
+            return null;
+        }
+
+        // plink outputs: "plink: Release 0.82" — extract the version number
+        if (preg_match('/Release\s+(\S+)/i', $result, $m)) {
+            return $m[1];
+        }
+
+        return trim(explode("\n", $result)[0]);
     }
 
     public function getLandoPath(): ?string

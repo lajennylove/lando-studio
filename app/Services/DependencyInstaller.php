@@ -14,6 +14,7 @@ class DependencyInstaller
             'lando' => $this->installLando(),
             'docker' => $this->installDocker(),
             'orbstack' => $this->installOrbStack(),
+            'putty' => $this->installPutty(),
             default => throw new \InvalidArgumentException("Unknown dependency: {$dependency}"),
         };
     }
@@ -58,6 +59,34 @@ class DependencyInstaller
     {
         // OrbStack is macOS-only; bootstrap Homebrew if needed.
         return $this->withBrewBootstrap('brew install --cask orbstack');
+    }
+
+    public function installPutty(): string
+    {
+        // Prefer winget when available (built into Windows 10 21H1+ and Windows 11).
+        // Fall back to a direct MSI download for machines without winget (e.g. LTSC,
+        // stripped images, or older Windows 10 builds).
+        $checker = app(DependencyChecker::class);
+
+        if ($checker->isWingetInstalled()) {
+            return implode('; ', [
+                'winget install --id PuTTY.PuTTY --source winget --silent --accept-package-agreements --accept-source-agreements',
+                'Write-Output "[Lando Studio] PuTTY installed via winget. plink.exe is in: $env:ProgramFiles\PuTTY\"',
+            ]);
+        }
+
+        // Direct MSI download fallback — official PuTTY release page.
+        // msiexec /i ... /qn runs a silent install to the default Program Files path.
+        return implode('; ', [
+            '$arch = if ([Environment]::Is64BitOperatingSystem) { "64bit" } else { "32bit" }',
+            '$url = "https://the.earth.li/~sgtatham/putty/latest/w$arch/putty-$arch-installer.msi"',
+            '$msi = "$env:TEMP\putty-installer.msi"',
+            'Write-Output "[Lando Studio] winget not found — downloading PuTTY installer directly..."',
+            'Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing',
+            'Start-Process msiexec -Wait -ArgumentList @("/i", $msi, "/qn")',
+            'Remove-Item $msi -Force -ErrorAction SilentlyContinue',
+            'Write-Output "[Lando Studio] PuTTY installed. plink.exe is in: $env:ProgramFiles\PuTTY\"',
+        ]);
     }
 
     /**
