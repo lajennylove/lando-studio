@@ -82,14 +82,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-latest is Apple Silicon (arm64).
+          # Apple Silicon only. Intel Macs run this build through Rosetta 2.
           - runner: macos-latest
             arch: arm64
-          # Intel (x64) runner. macos-13 was retired by GitHub in Dec 2025, so
-          # the last Intel image is macos-15-intel. Verify against the live
-          # runner list before relying on it.
-          - runner: macos-15-intel
-            arch: x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
 
@@ -158,7 +153,10 @@ jobs:
           touch database/database.sqlite
           php artisan migrate --force
 
-      - name: Build macOS app (signed and notarized)
+      # electron-builder signs the app with the Developer ID identity from CSC_LINK.
+      # Notarization is NOT done by NativePHP's hook (it reports success even when
+      # notarization fails), so it is done explicitly in the steps below.
+      - name: Build macOS app (signed by electron-builder)
         env:
           NATIVEPHP_APP_ID: com.landostudio.app
           NATIVEPHP_APP_VERSION: ${{ needs.prepare.outputs.version }}
@@ -168,10 +166,89 @@ jobs:
           APP_URL: http://localhost
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: php artisan native:build mac ${{ matrix.arch }} -v
+
+      - name: Locate the built app
+        id: app
+        run: |
+          APP=$(find dist -maxdepth 3 -type d -name '*.app' | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app bundle found under dist/."
+            exit 1
+          fi
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "Found $APP"
+
+      - name: Notarize and staple the app
+        # Fails the job unless Apple returns status Accepted. Secret values are
+        # never echoed; only the submission ID and status are printed.
+        env:
+          APP: ${{ steps.app.outputs.app }}
           NATIVEPHP_APPLE_ID: ${{ secrets.NATIVEPHP_APPLE_ID }}
           NATIVEPHP_APPLE_ID_PASS: ${{ secrets.NATIVEPHP_APPLE_ID_PASS }}
           NATIVEPHP_APPLE_TEAM_ID: ${{ secrets.NATIVEPHP_APPLE_TEAM_ID }}
-        run: php artisan native:build mac ${{ matrix.arch }} -v
+        run: |
+          set -euo pipefail
+          SUBMIT="$RUNNER_TEMP/notary-submit.zip"
+          RESULT="$RUNNER_TEMP/notary-result.json"
+          ditto -c -k --keepParent "$APP" "$SUBMIT"
+          xcrun notarytool submit "$SUBMIT" \
+            --apple-id "$NATIVEPHP_APPLE_ID" \
+            --password "$NATIVEPHP_APPLE_ID_PASS" \
+            --team-id "$NATIVEPHP_APPLE_TEAM_ID" \
+            --wait --output-format json > "$RESULT"
+          STATUS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "$RESULT")
+          ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "$RESULT")
+          echo "Notarization submission $ID status: $STATUS"
+          if [ "$STATUS" != "Accepted" ]; then
+            xcrun notarytool log "$ID" \
+              --apple-id "$NATIVEPHP_APPLE_ID" \
+              --password "$NATIVEPHP_APPLE_ID_PASS" \
+              --team-id "$NATIVEPHP_APPLE_TEAM_ID" || true
+            echo "::error::Apple did not accept the notarization (status: $STATUS)."
+            exit 1
+          fi
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+
+      - name: Rebuild zip and DMG from the stapled app
+        # electron-builder packages the zip and DMG before stapling, so they do not
+        # contain the notarization ticket. Rebuild both from the stapled app.
+        env:
+          APP: ${{ steps.app.outputs.app }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          rm -f dist/*.zip dist/*.dmg dist/*.blockmap
+          ditto -c -k --keepParent "$APP" "dist/Lando-Studio-${VERSION}-arm64.zip"
+          hdiutil create -volname "Lando Studio" -srcfolder "$STAGE" -ov -format UDZO \
+            "dist/Lando-Studio-${VERSION}-arm64.dmg"
+
+      - name: Verify the shipped zip and DMG
+        # Checks the files that are uploaded, not the intermediate app. Fails
+        # unless the ticket is stapled and Gatekeeper accepts the app.
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          CHECK="$RUNNER_TEMP/verify"
+          MOUNT="$CHECK/dmg"
+          rm -rf "$CHECK" && mkdir -p "$MOUNT"
+          ditto -x -k "dist/Lando-Studio-${VERSION}-arm64.zip" "$CHECK"
+          hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT" \
+            "dist/Lando-Studio-${VERSION}-arm64.dmg"
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
+          ZIP_APP=$(find "$CHECK" -maxdepth 1 -name '*.app' | head -n 1)
+          DMG_APP=$(find "$MOUNT" -maxdepth 1 -name '*.app' | head -n 1)
+          for TARGET in "$ZIP_APP" "$DMG_APP"; do
+            echo "Checking $TARGET"
+            xcrun stapler validate "$TARGET"
+            spctl --assess --type execute --verbose=4 "$TARGET"
+          done
 
       - name: Find build output
         run: |
@@ -330,14 +407,16 @@ jobs:
       - name: Configure Azure code signing (optional)
         # Signing is optional for now. When any Azure Trusted Signing value is
         # missing, this step warns and the build continues unsigned.
+        # Non-sensitive identifiers are repository variables (vars.*); only the
+        # client secret is a secret.
         shell: pwsh
         env:
-          NATIVEPHP_AZURE_PUBLISHER_NAME: ${{ secrets.NATIVEPHP_AZURE_PUBLISHER_NAME }}
-          NATIVEPHP_AZURE_ENDPOINT: ${{ secrets.NATIVEPHP_AZURE_ENDPOINT }}
-          NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME }}
-          NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ secrets.NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          NATIVEPHP_AZURE_PUBLISHER_NAME: ${{ vars.NATIVEPHP_AZURE_PUBLISHER_NAME }}
+          NATIVEPHP_AZURE_ENDPOINT: ${{ vars.NATIVEPHP_AZURE_ENDPOINT }}
+          NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME: ${{ vars.NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME }}
+          NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ vars.NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: |
           $required = @(
