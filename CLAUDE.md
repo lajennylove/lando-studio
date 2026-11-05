@@ -151,6 +151,7 @@ Host PHP (the NativePHP/Electron runtime) is separate from the PHP inside Lando 
 - **Do not** add dump, debug, or log statements to committed code (`dd`, `dump`, `var_dump`, `ray`). The codebase currently has none.
 - **Do not** write dump artifacts on the remote server. Dumps are produced locally only. The remote-file policy is in `project-status.md`.
 - **Working with specs and designs:** if a specification or design does not match the code or the other design, say so explicitly to the developer. Name both sides and the gap; do not silently pick one.
+- **macOS OrbStack resets (testing the "Docker not installed" case).** Follow the vault note `Projects/Lando Studio/OrbStack Safe Reset.md` exactly. OrbStack's images, containers and volumes live in `~/Library/Group Containers/HUAQ24HBR6.dev.orbstack`. Never run `brew uninstall --cask orbstack --zap`, never delete that folder or `~/.orbstack` outside a restore, and never run `docker system prune`, `docker volume rm`, `docker rmi` or `docker container rm` as part of a test. Inventory and back up first, and compare the inventory after the reinstall. If any count differs, stop and report.
 
 ## Known issues (verify before relying on)
 
