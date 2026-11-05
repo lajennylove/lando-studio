@@ -48,8 +48,18 @@ class WindowsDependencyInstallerTest extends TestCase
         $command = $this->windowsInstaller()->getInstallCommand('wsl');
 
         $this->assertStringContainsString('install_wsl.log', $command);
-        $this->assertStringContainsString('3010', $command);
         $this->assertStringContainsString('Restart Windows', $command);
+    }
+
+    public function test_wsl_install_checks_features_before_enabling_them_and_verifies_afterwards(): void
+    {
+        $command = $this->windowsInstaller()->getInstallCommand('wsl');
+
+        $this->assertStringContainsString('Get-WindowsOptionalFeature', $command);
+        $this->assertStringContainsString('-ne "Enabled"', $command);
+        $this->assertStringContainsString('Enable-WindowsOptionalFeature', $command);
+        $this->assertStringContainsString('-NoRestart', $command);
+        $this->assertStringContainsString('exit 1', $command);
     }
 
     public function test_lando_install_patches_the_broken_arm64_check_and_uses_the_x64_cli(): void

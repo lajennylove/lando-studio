@@ -108,12 +108,17 @@ class DependencyInstaller
     public function installWsl(): string
     {
         $log = storage_path('logs/install_wsl.log');
+        // Order matters: check the two Windows features first, enable only the ones that are off, install
+        // the WSL package, then verify all three. Turning a feature on needs a restart before it is active,
+        // so the message asks for one in that case. Docker Desktop reads these features at start-up.
         $inner = implode('; ', [
-            '$a = 0; $b = 0',
-            'dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null; $a = $LASTEXITCODE',
-            'dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null; $b = $LASTEXITCODE',
-            'winget install --id Microsoft.WSL -e --silent --accept-package-agreements --accept-source-agreements',
-            'if ($a -eq 3010 -or $b -eq 3010) { Write-Output "[Lando Studio] WSL2 is installed. Restart Windows to finish, then reopen Lando Studio." } else { Write-Output "[Lando Studio] WSL2 is installed." }',
+            '$features = @("VirtualMachinePlatform", "Microsoft-Windows-Subsystem-Linux")',
+            '$restart = $false',
+            'foreach ($f in $features) { if ((Get-WindowsOptionalFeature -Online -FeatureName $f).State -ne "Enabled") { Enable-WindowsOptionalFeature -Online -FeatureName $f -All -NoRestart | Out-Null; $restart = $true } }',
+            'if (-not (Test-Path "C:\Program Files\WSL\wsl.exe")) { winget install --id Microsoft.WSL -e --silent --accept-package-agreements --accept-source-agreements }',
+            '$ok = (Test-Path "C:\Program Files\WSL\wsl.exe") -and (@($features | Where-Object { (Get-WindowsOptionalFeature -Online -FeatureName $_).State -eq "Enabled" }).Count -eq 2)',
+            'if (-not $ok) { Write-Output "[Lando Studio] WSL2 is not fully installed. Check install_wsl.log."; exit 1 }',
+            'if ($restart) { Write-Output "[Lando Studio] WSL2 is installed. Restart Windows to finish, then reopen Lando Studio." } else { Write-Output "[Lando Studio] WSL2 is installed." }',
         ]);
         $inner .= ' *> \''.$log.'\'';
 
