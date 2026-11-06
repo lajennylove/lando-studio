@@ -28,6 +28,32 @@ class LinuxDependencyInstallerTest extends TestCase
         return new DependencyInstaller($platform);
     }
 
+    public function test_sshpass_on_arch_installs_the_package_through_pkexec(): void
+    {
+        $command = $this->linuxInstaller(arch: true)->getInstallCommand('sshpass');
+
+        $this->assertSame('pkexec pacman -S --noconfirm --needed sshpass', $command);
+    }
+
+    public function test_sshpass_on_other_linux_tries_the_common_package_managers(): void
+    {
+        $command = $this->linuxInstaller(arch: false)->getInstallCommand('sshpass');
+
+        $this->assertStringStartsWith('pkexec sh -c ', $command);
+        $this->assertStringContainsString('apt-get install -y sshpass', $command);
+        $this->assertStringContainsString('dnf install -y sshpass', $command);
+    }
+
+    public function test_sshpass_on_macos_installs_from_the_homebrew_tap(): void
+    {
+        $platform = Mockery::mock(PlatformDetector::class);
+        $platform->shouldReceive('os')->andReturn('macos');
+
+        $command = (new DependencyInstaller($platform))->getInstallCommand('sshpass');
+
+        $this->assertStringContainsString('brew install hudochenkov/sshpass/sshpass', $command);
+    }
+
     public function test_lando_ca_on_linux_runs_lando_script_through_pkexec(): void
     {
         $command = $this->linuxInstaller(arch: false)->installLandoCaLinux();

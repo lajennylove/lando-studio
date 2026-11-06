@@ -24,9 +24,12 @@ class DependencyChecker
 
     public function allRequiredInstalled(): bool
     {
-        $windowsRequirements = ! $this->platform->isWindows() || ($this->isWslInstalled() && $this->isPuttyInstalled());
+        // Windows needs WSL2 and PuTTY; Linux and macOS need sshpass. The start page redirects to setup when this is false.
+        $platformRequirements = $this->platform->isWindows()
+            ? $this->isWslInstalled() && $this->isPuttyInstalled()
+            : $this->isSshpassInstalled();
 
-        return $windowsRequirements && $this->isLandoInstalled() && $this->isDockerInstalled() && $this->isLandoSetupComplete();
+        return $platformRequirements && $this->isLandoInstalled() && $this->isDockerInstalled() && $this->isLandoSetupComplete();
     }
 
     /**
@@ -144,6 +147,15 @@ class DependencyChecker
         }
 
         return null;
+    }
+
+    /**
+     * Whether sshpass is available on Linux and macOS. The remote connection check and the clone and sync
+     * steps use it for password SSH; on Windows the app uses PuTTY's plink instead.
+     */
+    public function isSshpassInstalled(): bool
+    {
+        return ! $this->platform->isWindows() && $this->commandExists('sshpass');
     }
 
     /**

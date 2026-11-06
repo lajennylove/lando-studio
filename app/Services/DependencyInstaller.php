@@ -16,6 +16,7 @@ class DependencyInstaller
             'orbstack' => $this->installOrbStack(),
             'putty' => $this->installPutty(),
             'wsl' => $this->installWsl(),
+            'sshpass' => $this->installSshpass(),
             default => throw new \InvalidArgumentException("Unknown dependency: {$dependency}"),
         };
     }
@@ -65,6 +66,23 @@ class DependencyInstaller
                 ? $this->installDockerOnArch()
                 : 'curl -fsSL https://get.docker.com | sh',
         };
+    }
+
+    /**
+     * Installs sshpass for password SSH. On macOS it comes from the hudochenkov/sshpass Homebrew tap, which
+     * the user must trust. On Linux the distro package is installed through pkexec (desktop prompt).
+     */
+    public function installSshpass(): string
+    {
+        if ($this->platform->os() === 'macos') {
+            return $this->withBrewBootstrap('brew install hudochenkov/sshpass/sshpass');
+        }
+
+        if ($this->platform->isArchLinux()) {
+            return 'pkexec pacman -S --noconfirm --needed sshpass';
+        }
+
+        return 'pkexec sh -c '.escapeshellarg('apt-get install -y sshpass || dnf install -y sshpass || zypper --non-interactive install sshpass');
     }
 
     /**

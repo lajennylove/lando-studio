@@ -69,6 +69,18 @@ class DependencyCheckerTest extends TestCase
         $this->assertTrue($this->checkerWithHome()->isLandoSetupComplete());
     }
 
+    public function test_all_required_is_false_on_linux_when_sshpass_is_missing(): void
+    {
+        $platform = Mockery::mock(PlatformDetector::class);
+        $platform->shouldReceive('isWindows')->andReturn(false);
+        $platform->shouldReceive('homeDir')->andReturn($this->home);
+
+        $checker = Mockery::mock(DependencyChecker::class, [$platform])->makePartial();
+        $checker->shouldReceive('isSshpassInstalled')->andReturn(false);
+
+        $this->assertFalse($checker->allRequiredInstalled());
+    }
+
     public function test_lando_setup_is_not_complete_when_only_the_ca_exists(): void
     {
         file_put_contents($this->home.'/.lando/certs/LandoCA.crt', 'cert');

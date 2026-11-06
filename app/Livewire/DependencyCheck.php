@@ -59,6 +59,16 @@ class DependencyCheck extends Component
             ];
         }
 
+        if (! $platform->isWindows()) {
+            $this->dependencies['sshpass'] = [
+                'installed' => $checker->isSshpassInstalled(),
+                'version' => null,
+                'label' => 'sshpass',
+                'description' => 'Required for SSH connections to remote sites (clone and sync)',
+                'required' => true,
+            ];
+        }
+
         $this->dependencies['lando'] = [
             'installed' => $checker->isLandoInstalled(),
             'version' => $checker->getLandoVersion(),
