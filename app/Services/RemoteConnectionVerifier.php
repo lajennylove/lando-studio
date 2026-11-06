@@ -146,7 +146,7 @@ final class RemoteConnectionVerifier
         $dbOut = $schemaProbe->output().$schemaProbe->errorOutput();
         $dbExitCode = $schemaProbe->exitCode();
         $hasDumpMarker = str_contains($dbOut, 'MariaDB dump') || str_contains($dbOut, 'MySQL dump');
-        $hasAccessDenied = stripos($dbOut, 'Access denied') !== false || stripos($dbOut, '1045') !== false;
+        $hasAccessDenied = self::isAccessDenied($dbOut);
 
         Log::debug('RemoteConnectionVerifier: DB probe result', [
             'exit_code' => $dbExitCode,
@@ -198,5 +198,14 @@ final class RemoteConnectionVerifier
         );
 
         return ['powershell', '-NoProfile', '-Command', $ps];
+    }
+
+    /**
+     * Whether mysqldump output reports a rejected login. Matches MySQL's own error text only: a bare "1045"
+     * is common in dump output (AUTO_INCREMENT values, data), and it does not mean the login failed.
+     */
+    public static function isAccessDenied(string $output): bool
+    {
+        return stripos($output, 'Access denied for user') !== false || str_contains($output, 'ERROR 1045');
     }
 }

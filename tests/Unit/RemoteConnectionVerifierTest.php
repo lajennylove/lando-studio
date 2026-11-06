@@ -104,4 +104,17 @@ class RemoteConnectionVerifierTest extends TestCase
         $this->assertFalse($r->ok);
         $this->assertSame('database', $r->phase);
     }
+
+    public function test_a_1045_inside_a_schema_dump_is_not_an_access_error(): void
+    {
+        $dump = "/*M!999999\\- enable the sandbox mode */\n-- MariaDB dump 10.19\n) ENGINE=InnoDB AUTO_INCREMENT=1045 DEFAULT CHARSET=utf8mb4;\n";
+
+        $this->assertFalse(RemoteConnectionVerifier::isAccessDenied($dump));
+    }
+
+    public function test_mysql_login_errors_are_access_errors(): void
+    {
+        $this->assertTrue(RemoteConnectionVerifier::isAccessDenied("mysqldump: Got error: 1045: Access denied for user 'u'@'localhost'"));
+        $this->assertTrue(RemoteConnectionVerifier::isAccessDenied("ERROR 1045 (28000): Access denied for user 'u'@'localhost' (using password: YES)"));
+    }
 }
