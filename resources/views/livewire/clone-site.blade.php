@@ -225,6 +225,13 @@
                     <flux:description>Where the site files will be created</flux:description>
                 </flux:field>
 
+                <flux:field>
+                    <flux:label>Theme Branch</flux:label>
+                    <flux:input wire:model="themeBranch" placeholder="main" />
+                    <flux:description>Branch checked out in the theme repository after cloning</flux:description>
+                    <flux:error name="themeBranch" />
+                </flux:field>
+
                 <flux:callout variant="info" icon="information-circle" class="w-full">
                     <flux:text>
                         This process can take a long time because it dumps the DB from the remote server, imports it, search replace the remote-url for the local-url, installs the theme from the repo, installs Composer dependencies, installs Node dependencies and build the project assets.

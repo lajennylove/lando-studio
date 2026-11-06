@@ -10,6 +10,9 @@ use Illuminate\Support\Str;
 
 class SiteManager
 {
+    /** Branch checked out in each theme repository after cloning. */
+    public const THEME_BRANCH = 'main';
+
     public function __construct(
         private PlatformDetector $platform,
         private LandoService $lando,
@@ -206,7 +209,7 @@ class SiteManager
         ]);
     }
 
-    public function cloneSite(RemoteSite $remoteSite, string $name, ?string $path = null): Site
+    public function cloneSite(RemoteSite $remoteSite, string $name, ?string $path = null, ?string $themeBranch = null): Site
     {
         $slug = Str::slug($name);
         $sitePath = $path ?? ($this->platform->defaultCodePath().DIRECTORY_SEPARATOR.$slug);
@@ -242,6 +245,7 @@ class SiteManager
             'redis_version' => $versions['redis_version'],
             'db_port' => $dbPort,
             'theme_name' => $remoteSite->theme_name,
+            'theme_branch' => $themeBranch ?: self::THEME_BRANCH,
             'remote_site_id' => $remoteSite->id,
         ]);
     }
@@ -356,6 +360,7 @@ class SiteManager
             ? "wp/wp-content/themes/{$remoteSite->theme_name}"
             : null;
         $cloneTheme = $remoteSite->repo_url && $remoteSite->theme_name;
+        $themeBranch = $site->theme_branch ?: self::THEME_BRANCH;
 
         $stepNum = 12;
         $steps[] = [
@@ -369,8 +374,8 @@ class SiteManager
         if ($cloneTheme) {
             $themePath = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes'.DIRECTORY_SEPARATOR.$remoteSite->theme_name;
             $steps[] = [
-                'label' => 'Switching to dev branch',
-                'command' => $this->gitCheckoutCommand($themePath, 'dev'),
+                'label' => 'Switching to '.$themeBranch.' branch',
+                'command' => $this->gitCheckoutCommand($themePath, $themeBranch),
                 'step' => $stepNum++,
             ];
         }
@@ -509,19 +514,38 @@ class SiteManager
         if ($this->platform->isWindows()) {
             $themesDir = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes';
 
-            return "Set-Location \"{$themesDir}\"; git clone --progress {$repoUrl} {$themeName}; Write-Host 'Theme cloned successfully.'";
+            return "Set-Location \"{$themesDir}\"; \$env:GIT_TERMINAL_PROMPT='0'; git clone --progress {$repoUrl} {$themeName}; Write-Host 'Theme cloned successfully.'";
         }
 
-        return "cd {$path}/wp/wp-content/themes && git clone --progress {$repoUrl} {$themeName} && echo \"Theme cloned successfully.\"";
+        // GIT_TERMINAL_PROMPT=0 makes a missing login fail at once. Without it git waits for a username that
+        // nothing can answer, and the step stops with no output.
+        return "cd {$path}/wp/wp-content/themes && GIT_TERMINAL_PROMPT=0 git clone --progress {$repoUrl} {$themeName} && echo \"Theme cloned successfully.\"";
     }
 
     private function gitCheckoutCommand(string $path, string $branch): string
     {
         if ($this->platform->isWindows()) {
-            return "Set-Location \"{$path}\"; git checkout {$branch}; Write-Host \"Switched to branch: {$branch}\"";
+            $quoted = "'".str_replace("'", "''", $branch)."'";
+
+            return "Set-Location \"{$path}\"; git checkout {$quoted} 2>\$null; if (\$LASTEXITCODE -ne 0) { Write-Host ('Branch {$branch} not found, staying on the current branch') } else { Write-Host ('Switched to branch: {$branch}') }";
         }
 
-        return "cd {$path} && git checkout {$branch} && echo \"Switched to branch: \$(git branch --show-current)\"";
+        // A repo without this branch keeps its current branch instead of failing the steps after it.
+        $quoted = escapeshellarg($branch);
+
+        return "cd {$path} && (git checkout {$quoted} 2>/dev/null || echo \"Branch {$branch} not found, staying on \$(git branch --show-current)\") && echo \"On branch: \$(git branch --show-current)\"";
+    }
+
+    /**
+     * Whether a git branch name is safe to pass to git and the shell: letters, digits, dots, slashes, dashes
+     * and underscores, no "..", and no leading or trailing separator. Checked before any clone starts.
+     */
+    public static function isValidBranchName(string $branch): bool
+    {
+        return strlen($branch) <= 100
+            && preg_match('/^[A-Za-z0-9][A-Za-z0-9._\/-]*[A-Za-z0-9]$|^[A-Za-z0-9]$/', $branch) === 1
+            && ! str_contains($branch, '..')
+            && ! str_contains($branch, '//');
     }
 
     public function destroySite(Site $site): string
@@ -556,7 +580,15 @@ class SiteManager
             return 'Start-Sleep -Seconds 2; cmd /c rmdir /s /q "'.$path.'"; Write-Host \'Site folder removed.\'';
         }
 
-        return "rm -rf '{$site->path}'";
+        $quotedPath = escapeshellarg($site->path);
+
+        // On Linux the containers write files as root into the bind mount, and a plain rm cannot remove them.
+        // If the folder is still there after rm, retry through pkexec, which shows the desktop password prompt.
+        if (app(PlatformDetector::class)->os() === 'linux') {
+            return "rm -rf {$quotedPath}; [ ! -e {$quotedPath} ] || pkexec rm -rf {$quotedPath}";
+        }
+
+        return "rm -rf {$quotedPath}";
     }
 
     /**

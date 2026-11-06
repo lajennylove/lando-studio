@@ -30,6 +30,8 @@ class CloneSite extends Component
 
     public string $path = '';
 
+    public string $themeBranch = SiteManager::THEME_BRANCH;
+
     // Progress
     public bool $showProgress = false;
 
@@ -105,6 +107,11 @@ class CloneSite extends Component
         $this->validate([
             'remoteSiteId' => 'required|exists:remote_sites,id',
             'siteName' => ['required', 'min:2', 'regex:/^[a-zA-Z0-9\s\-]+$/'],
+            'themeBranch' => ['required', 'string', 'max:100', function (string $attribute, mixed $value, \Closure $fail) {
+                if (! SiteManager::isValidBranchName((string) $value)) {
+                    $fail('Use letters, numbers, dots, dashes, underscores and slashes only.');
+                }
+            }],
         ]);
 
         $slug = Str::slug($this->siteName);
@@ -263,7 +270,7 @@ class CloneSite extends Component
         $this->cachedSteps = null;
 
         $manager = app(SiteManager::class);
-        $site = $manager->cloneSite($remoteSite, $slug, $this->path);
+        $site = $manager->cloneSite($remoteSite, $slug, $this->path, $this->themeBranch);
 
         $this->siteId = $site->id;
         $this->showProgress = true;
