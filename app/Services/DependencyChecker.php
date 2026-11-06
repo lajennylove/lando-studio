@@ -55,7 +55,16 @@ class DependencyChecker
             return file_exists($bin.'lando.cmd') || file_exists($bin.'lando.exe');
         }
 
-        return false;
+        return file_exists($this->unixLandoPath());
+    }
+
+    /**
+     * Where setup-lando.sh puts the Lando CLI on Linux and macOS. The running app's PATH does not
+     * include this folder after the install, so the file is checked directly.
+     */
+    private function unixLandoPath(): string
+    {
+        return $this->platform->homeDir().'/.lando/bin/lando';
     }
 
     /** Full path to lando.cmd (preferred on Windows) or lando.exe fallback. */
@@ -147,11 +156,21 @@ class DependencyChecker
     }
 
     /**
-     * Whether `lando setup` has been run (common plugins are installed).
-     * Checks for the @lando/wordpress plugin which is required for site creation.
+     * Whether `lando setup` has finished. Lando 3 fetches @lando/wordpress when a site first needs it, and
+     * `lando setup` does not install it, so the plugin folder alone is not a reliable signal. Setup always
+     * creates the Lando CA and the orchestrator (Docker Compose), so those count too.
      */
     public function isLandoSetupComplete(): bool
     {
+        $home = $this->platform->homeDir();
+        $landoDir = $home.DIRECTORY_SEPARATOR.'.lando';
+        $setupOutputs = file_exists($landoDir.DIRECTORY_SEPARATOR.'certs'.DIRECTORY_SEPARATOR.'LandoCA.crt')
+            && ! empty(glob($landoDir.DIRECTORY_SEPARATOR.'bin'.DIRECTORY_SEPARATOR.'docker-compose-*'));
+
+        if ($setupOutputs) {
+            return true;
+        }
+
         $pluginDir = $this->getLandoPluginsDir();
         if (! $pluginDir) {
             return false;
@@ -180,7 +199,7 @@ class DependencyChecker
         // On Windows use the full path in case the child process PATH is frozen.
         $cmd = $this->platform->isWindows()
             ? '"'.$this->windowsLandoExe().'" version'
-            : 'lando version';
+            : escapeshellarg($this->getLandoPath() ?? 'lando').' version';
 
         return $this->getCommandOutput($cmd);
     }
@@ -228,7 +247,9 @@ class DependencyChecker
             return file_exists($exe) ? $exe : ($this->getCommandPath('lando') ?? $exe);
         }
 
-        return $this->getCommandPath('lando');
+        // Fall back to the install location when PATH does not have it (see unixLandoPath()).
+        return $this->getCommandPath('lando')
+            ?? (file_exists($this->unixLandoPath()) ? $this->unixLandoPath() : null);
     }
 
     private function commandExists(string $command): bool

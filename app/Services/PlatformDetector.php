@@ -10,6 +10,26 @@ class PlatformDetector
 
     private ?string $arch = null;
 
+    /**
+     * Whether this is an Arch-based Linux (Arch, Omarchy, Manjaro, EndeavourOS). Reads /etc/os-release
+     * for ID and ID_LIKE, because the Docker install script does not support these distributions.
+     */
+    public function isArchLinux(): bool
+    {
+        if ($this->os() !== 'linux') {
+            return false;
+        }
+
+        $ids = [];
+        foreach (explode("\n", @file_get_contents('/etc/os-release') ?: '') as $line) {
+            if (preg_match('/^(ID|ID_LIKE)=(.*)$/', trim($line), $m)) {
+                $ids = [...$ids, ...preg_split('/\s+/', trim($m[2], "\"' "))];
+            }
+        }
+
+        return in_array('arch', $ids, true);
+    }
+
     public function os(): string
     {
         if ($this->os === null) {

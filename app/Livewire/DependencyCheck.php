@@ -191,6 +191,7 @@ class DependencyCheck extends Component
         }
 
         $platform = app(PlatformDetector::class);
+        $installer = app(DependencyInstaller::class);
 
         $this->installing = true;
         $this->installingDep = 'lando-setup';
@@ -208,7 +209,12 @@ class DependencyCheck extends Component
         } else {
             $logArg = escapeshellarg($this->installLogFile);
             $markerArg = escapeshellarg($marker);
-            $command = escapeshellarg($lando)." setup --yes > {$logArg} 2>&1; echo {$markerArg} >> {$logArg}";
+            // On Linux, lando setup's CA step needs a sudo password this run cannot ask for. Skip that step
+            // in lando setup and trust the CA with pkexec (desktop prompt) once setup has created it.
+            $linux = $platform->os() === 'linux';
+            $setup = escapeshellarg($lando).' setup --yes'.($linux ? ' --skip-install-ca' : '');
+            $caStep = $linux ? ' && '.$installer->installLandoCaLinux().' >> '.$logArg.' 2>&1' : '';
+            $command = "{$setup} > {$logArg} 2>&1{$caStep}; echo {$markerArg} >> {$logArg}";
             $cmd = [$platform->shellWrapper(), $platform->shellFlag(), $command];
         }
 

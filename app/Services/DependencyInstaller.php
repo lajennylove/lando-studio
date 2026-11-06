@@ -60,9 +60,47 @@ class DependencyInstaller
                 'Start-Process $f -Wait -ArgumentList @("install", "--quiet", "--accept-license", "--backend=wsl-2")',
             ]),
 
-            // get.docker.com auto-detects the distro (apt, yum, dnf, zypper, etc.).
-            default => 'curl -fsSL https://get.docker.com | sh',
+            // get.docker.com auto-detects the distro (apt, yum, dnf, zypper, etc.), but not Arch-based ones.
+            default => $this->platform->isArchLinux()
+                ? $this->installDockerOnArch()
+                : 'curl -fsSL https://get.docker.com | sh',
         };
+    }
+
+    /**
+     * Trusts Lando's development CA in the Linux system store. `lando setup` runs this step through sudo,
+     * and with no terminal sudo cannot ask for a password, so the app runs the same script through pkexec
+     * after `lando setup --skip-install-ca`. Needs the CA certificate that `lando setup` creates.
+     */
+    public function installLandoCaLinux(): string
+    {
+        $home = $this->platform->homeDir();
+
+        return 'pkexec '.escapeshellarg($home.'/.lando/scripts/install-system-ca-linux.sh')
+            .' --ca '.escapeshellarg($home.'/.lando/certs/LandoCA.crt');
+    }
+
+    /**
+     * Installs Docker with pacman on Arch-based Linux. The install runs without a terminal, so pkexec
+     * raises the desktop's password prompt once for the whole root script. The Arch unit starts dockerd
+     * from docker.socket, so the socket is enabled first, and failed units are reset (a failed start leaves
+     * the socket rate-limited). The user name is passed as an argument, because $(id -un) inside the root
+     * shell would name root. The braces send all output to the install log.
+     */
+    private function installDockerOnArch(): string
+    {
+        $rootScript = implode(' && ', [
+            'pacman -S --noconfirm --needed docker docker-compose docker-buildx',
+            'systemctl daemon-reload',
+            'systemctl enable docker.socket docker.service',
+            // Units must be loaded before reset-failed can see them. A failed start leaves the socket rate-limited.
+            'systemctl reset-failed docker.socket docker.service 2>/dev/null || true',
+            'systemctl start docker.socket docker.service',
+            'usermod -aG docker "$1"',
+        ]);
+
+        return '{ pkexec sh -c '.escapeshellarg($rootScript).' lando-studio "$(id -un)" && '
+            .'echo "[Lando Studio] Docker installed. Log out and back in so the docker group applies."; }';
     }
 
     public function installOrbStack(): string
