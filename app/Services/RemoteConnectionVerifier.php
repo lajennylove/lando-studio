@@ -73,9 +73,9 @@ final class RemoteConnectionVerifier
             // so Symfony Process::input() cannot answer it. Wrapping in PowerShell
             // with "echo y |" properly pipes through the shell. When the key is
             // already cached the "y" is harmlessly ignored.
-            $sshProbe = Process::timeout(30)->run(
-                $this->plinkViaPowerShell($plinkPath, $sshPass, $target, 'echo LANDO_STUDIO_SSH_OK')
-            );
+            $sshProbe = Process::timeout(30)
+                ->env(['LANDO_STUDIO_SSH_PW' => $sshPass])
+                ->run($this->plinkViaPowerShell($plinkPath, $target, 'echo LANDO_STUDIO_SSH_OK'));
         } else {
             $sshProbe = Process::env(['SSHPASS' => $sshPass])
                 ->timeout(30)
@@ -123,9 +123,9 @@ final class RemoteConnectionVerifier
                 escapeshellarg($dbPass),
                 escapeshellarg((string) $remote->db_name),
             );
-            $schemaProbe = Process::timeout(90)->run(
-                $this->plinkViaPowerShell($plinkPath, $sshPass, $target, $dbCmd)
-            );
+            $schemaProbe = Process::timeout(90)
+                ->env(['LANDO_STUDIO_SSH_PW' => $sshPass])
+                ->run($this->plinkViaPowerShell($plinkPath, $target, $dbCmd));
         } else {
             $schemaProbe = Process::env(['SSHPASS' => $sshPass])
                 ->timeout(90)
@@ -185,14 +185,15 @@ final class RemoteConnectionVerifier
      *
      * @return list<string>
      */
-    private function plinkViaPowerShell(string $plinkPath, string $password, string $target, string $remoteCmd): array
+    private function plinkViaPowerShell(string $plinkPath, string $target, string $remoteCmd): array
     {
         $esc = static fn (string $v): string => str_replace("'", "''", $v);
 
+        // The password is not in this string. The caller passes it as LANDO_STUDIO_SSH_PW, and PowerShell reads it
+        // from there. Passing it inline lets cmd.exe rewrite characters such as ! % ^ before plink sees them.
         $ps = sprintf(
-            "echo y | & '%s' -ssh -pw '%s' -T '%s' '%s'",
+            "echo y | & '%s' -ssh -pw \$env:LANDO_STUDIO_SSH_PW -T '%s' '%s'",
             $esc($plinkPath),
-            $esc($password),
             $esc($target),
             $esc($remoteCmd),
         );

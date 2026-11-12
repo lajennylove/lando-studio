@@ -112,6 +112,20 @@ class RemoteConnectionVerifierTest extends TestCase
         $this->assertFalse(RemoteConnectionVerifier::isAccessDenied($dump));
     }
 
+    public function test_windows_ssh_command_reads_the_password_from_the_environment_not_the_command_line(): void
+    {
+        $password = "pa!ss%w^rd&'x";
+        $verifier = app(RemoteConnectionVerifier::class);
+        $method = new \ReflectionMethod($verifier, 'plinkViaPowerShell');
+        $method->setAccessible(true);
+
+        $command = $method->invoke($verifier, 'plink', '/home/u@10.0.0.1', 'echo LANDO_STUDIO_SSH_OK');
+        $script = implode(' ', $command);
+
+        $this->assertStringContainsString('-pw $env:LANDO_STUDIO_SSH_PW', $script);
+        $this->assertStringNotContainsString($password, $script);
+    }
+
     public function test_mysql_login_errors_are_access_errors(): void
     {
         $this->assertTrue(RemoteConnectionVerifier::isAccessDenied("mysqldump: Got error: 1045: Access denied for user 'u'@'localhost'"));
