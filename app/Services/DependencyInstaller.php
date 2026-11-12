@@ -172,13 +172,20 @@ class DependencyInstaller
             '$restart = $false',
             'foreach ($f in $features) { if ((Get-WindowsOptionalFeature -Online -FeatureName $f).State -ne "Enabled") { Enable-WindowsOptionalFeature -Online -FeatureName $f -All -NoRestart | Out-Null; $restart = $true } }',
             'if (-not (Test-Path "C:\Program Files\WSL\wsl.exe")) { winget install --id Microsoft.WSL -e --silent --accept-package-agreements --accept-source-agreements }',
-            '$ok = (Test-Path "C:\Program Files\WSL\wsl.exe") -and (@($features | Where-Object { (Get-WindowsOptionalFeature -Online -FeatureName $_).State -eq "Enabled" }).Count -eq 2)',
+            '$ok = (Test-Path "C:\Program Files\WSL\wsl.exe") -and (@($features | Where-Object { (Get-WindowsOptionalFeature -Online -FeatureName $_).State -in @("Enabled", "EnablePending") }).Count -eq 2)',
             'if (-not $ok) { Write-Output "[Lando Studio] WSL2 is not fully installed. Check install_wsl.log."; exit 1 }',
-            'if ($restart) { Write-Output "[Lando Studio] WSL2 is installed. Restart Windows to finish, then reopen Lando Studio." } else { Write-Output "[Lando Studio] WSL2 is installed." }',
+            // A feature that was just turned on only works after a restart, and the elevated process would wait
+            // on that restart forever. So the restart is scheduled here, after the checks pass, with a short
+            // countdown. shutdown.exe returns at once, so the wait ends and the app can show the message.
+            'if ($restart) { Write-Output "[Lando Studio] WSL2 is installed. Restart Windows to finish: it restarts in 15 seconds, then reopen Lando Studio."; shutdown.exe /r /t 15 /c "Lando Studio is restarting Windows to finish the WSL2 setup." } else { Write-Output "[Lando Studio] WSL2 is installed." }',
         ]);
         $inner .= ' *> \''.$log.'\'';
 
-        return "Start-Process powershell -Verb RunAs -Wait -ArgumentList @('-NoProfile', '-Command', '".str_replace("'", "''", $inner)."')";
+        // Passed as an encoded command: Start-Process joins -ArgumentList items without quoting, so double quotes
+        // inside the script are stripped and the elevated PowerShell exits without running it. Base64 has no quotes or spaces.
+        $encoded = base64_encode(mb_convert_encoding($inner, 'UTF-16LE', 'UTF-8'));
+
+        return "Start-Process powershell -Verb RunAs -Wait -ArgumentList @('-NoProfile', '-EncodedCommand', '{$encoded}')";
     }
 
     /**
