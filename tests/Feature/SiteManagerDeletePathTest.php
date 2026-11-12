@@ -41,6 +41,26 @@ class SiteManagerDeletePathTest extends TestCase
         $this->assertSame("rm -rf '/Users/dev/code/sites/test'", app(SiteManager::class)->getDeletePath($site));
     }
 
+    public function test_windows_delete_leaves_the_site_folder_before_removing_it_and_checks_the_result(): void
+    {
+        $platform = Mockery::mock(PlatformDetector::class);
+        $platform->shouldReceive('isWindows')->andReturn(true);
+        $platform->shouldReceive('normalizePathSeparators')->andReturnUsing(fn (string $path): string => str_replace('/', '\\', $path));
+        $this->app->instance(PlatformDetector::class, $platform);
+        $site = new Site(['path' => 'C:\\Users\\dev\\code\\sites\\test']);
+
+        $command = app(SiteManager::class)->getDeletePath($site);
+
+        $this->assertStringContainsString('Set-Location $env:USERPROFILE', $command);
+        $this->assertLessThan(
+            strpos($command, 'rmdir'),
+            strpos($command, 'Set-Location'),
+            'the shell must leave the folder before rmdir runs',
+        );
+        $this->assertStringContainsString('Test-Path -LiteralPath', $command);
+        $this->assertStringContainsString('could not be removed', $command);
+    }
+
     public function test_delete_path_with_a_quote_is_escaped(): void
     {
         $this->useOs('linux');

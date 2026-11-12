@@ -576,8 +576,13 @@ class SiteManager
 
             // cmd's rmdir handles Windows file locks more reliably than Remove-Item.
             // A brief pause lets Docker Desktop release handles after lando destroy.
-            // PS5 doesn't support &&; use ; to unconditionally run Write-Host.
-            return 'Start-Sleep -Seconds 2; cmd /c rmdir /s /q "'.$path.'"; Write-Host \'Site folder removed.\'';
+            // lando destroy runs Set-Location into the site, and Windows will not delete a folder that a process is
+            // standing in, so the shell first moves to the user folder. The result is checked, since rmdir can fail
+            // without stopping the script.
+            // PS5 doesn't support &&; use ; to unconditionally run the checks.
+            return 'Start-Sleep -Seconds 2; Set-Location $env:USERPROFILE; cmd /c rmdir /s /q "'.$path.'"; '
+                .'if (Test-Path -LiteralPath "'.$path.'") { Write-Host \'Site folder could not be removed. Close any program using it, then delete it.\' } '
+                .'else { Write-Host \'Site folder removed.\' }';
         }
 
         $quotedPath = escapeshellarg($site->path);
