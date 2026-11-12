@@ -62,12 +62,12 @@ class WindowsDependencyInstallerTest extends TestCase
         $this->assertStringContainsString('Restart Windows', $command);
     }
 
-    public function test_wsl_install_checks_that_wsl_runs_and_clears_a_broken_package_before_reinstalling(): void
+    public function test_wsl_install_checks_the_installed_file_and_never_runs_the_wsl_stub(): void
     {
         $command = $this->wslScript();
 
-        $this->assertStringContainsString('wsl.exe --version', $command);
-        $this->assertStringNotContainsString('Program Files\WSL', $command);
+        $this->assertStringContainsString('Test-Path "C:\Program Files\WSL\wsl.exe"', $command);
+        $this->assertStringNotContainsString('wsl.exe --version', $command);
         $this->assertStringContainsString('winget uninstall --id Microsoft.WSL', $command);
         $this->assertLessThan(
             strpos($command, 'winget install --id Microsoft.WSL'),
@@ -76,12 +76,14 @@ class WindowsDependencyInstallerTest extends TestCase
         );
     }
 
-    public function test_wsl_install_logs_everything_the_script_prints_to_the_install_log(): void
+    public function test_wsl_install_appends_each_step_to_the_install_log(): void
     {
         $command = $this->wslScript();
 
-        $this->assertStringStartsWith("Start-Transcript -Path '", $command);
         $this->assertStringContainsString('install_wsl.log', $command);
+        $this->assertStringContainsString('Add-Content -LiteralPath $log', $command);
+        $this->assertStringContainsString('Log "verified: $ok"', $command);
+        $this->assertStringNotContainsString('Start-Transcript', $command);
     }
 
     public function test_wsl_install_forces_the_restart_after_the_checks_so_the_process_does_not_wait_on_it(): void
