@@ -167,19 +167,25 @@ class DependencyInstaller
         // Order matters: check the two Windows features first, enable only the ones that are off, install
         // the WSL package, then verify all three. Turning a feature on needs a restart before it is active,
         // so the message asks for one in that case. Docker Desktop reads these features at start-up.
+        // A transcript records everything the script prints, including winget's own output. A redirect on the last
+        // statement only (as before) left the log empty while winget ran.
         $inner = implode('; ', [
+            "Start-Transcript -Path '".str_replace("'", "''", $log)."' -Force | Out-Null",
             '$features = @("VirtualMachinePlatform", "Microsoft-Windows-Subsystem-Linux")',
             '$restart = $false',
             'foreach ($f in $features) { if ((Get-WindowsOptionalFeature -Online -FeatureName $f).State -ne "Enabled") { Enable-WindowsOptionalFeature -Online -FeatureName $f -All -NoRestart | Out-Null; $restart = $true } }',
-            'if (-not (Test-Path "C:\Program Files\WSL\wsl.exe")) { winget install --id Microsoft.WSL -e --silent --accept-package-agreements --accept-source-agreements }',
-            '$ok = (Test-Path "C:\Program Files\WSL\wsl.exe") -and (@($features | Where-Object { (Get-WindowsOptionalFeature -Online -FeatureName $_).State -in @("Enabled", "EnablePending") }).Count -eq 2)',
+            // Asks wsl.exe for its version rather than checking a folder: a WSL package whose files were removed
+            // still shows as installed in winget, and then winget only offers an upgrade it cannot apply.
+            'function Test-Wsl { try { $global:LASTEXITCODE = 1; wsl.exe --version *> $null; return ($LASTEXITCODE -eq 0) } catch { return $false } }',
+            'if (-not (Test-Wsl)) { if (winget list --id Microsoft.WSL -e 2>$null | Select-String -Quiet "Microsoft.WSL") { winget uninstall --id Microsoft.WSL -e --silent }; winget install --id Microsoft.WSL -e --silent --accept-package-agreements --accept-source-agreements }',
+            // With a restart still pending, wsl.exe may not run yet, and the restart below is what finishes the setup.
+            '$ok = ((Test-Wsl) -or $restart) -and (@($features | Where-Object { (Get-WindowsOptionalFeature -Online -FeatureName $_).State -in @("Enabled", "EnablePending") }).Count -eq 2)',
             'if (-not $ok) { Write-Output "[Lando Studio] WSL2 is not fully installed. Check install_wsl.log."; exit 1 }',
             // A feature that was just turned on only works after a restart, and the elevated process would wait
             // on that restart forever. So the restart is scheduled here, after the checks pass, with a short
             // countdown. shutdown.exe returns at once, so the wait ends and the app can show the message.
             'if ($restart) { Write-Output "[Lando Studio] WSL2 is installed. Restart Windows to finish: it restarts in 15 seconds, then reopen Lando Studio."; shutdown.exe /r /t 15 /c "Lando Studio is restarting Windows to finish the WSL2 setup." } else { Write-Output "[Lando Studio] WSL2 is installed." }',
         ]);
-        $inner .= ' *> \''.$log.'\'';
 
         // Passed as an encoded command: Start-Process joins -ArgumentList items without quoting, so double quotes
         // inside the script are stripped and the elevated PowerShell exits without running it. Base64 has no quotes or spaces.

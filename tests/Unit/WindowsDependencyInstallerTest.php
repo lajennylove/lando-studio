@@ -62,6 +62,28 @@ class WindowsDependencyInstallerTest extends TestCase
         $this->assertStringContainsString('Restart Windows', $command);
     }
 
+    public function test_wsl_install_checks_that_wsl_runs_and_clears_a_broken_package_before_reinstalling(): void
+    {
+        $command = $this->wslScript();
+
+        $this->assertStringContainsString('wsl.exe --version', $command);
+        $this->assertStringNotContainsString('Program Files\WSL', $command);
+        $this->assertStringContainsString('winget uninstall --id Microsoft.WSL', $command);
+        $this->assertLessThan(
+            strpos($command, 'winget install --id Microsoft.WSL'),
+            strpos($command, 'winget uninstall --id Microsoft.WSL'),
+            'the broken package must be removed before the install runs',
+        );
+    }
+
+    public function test_wsl_install_logs_everything_the_script_prints_to_the_install_log(): void
+    {
+        $command = $this->wslScript();
+
+        $this->assertStringStartsWith("Start-Transcript -Path '", $command);
+        $this->assertStringContainsString('install_wsl.log', $command);
+    }
+
     public function test_wsl_install_forces_the_restart_after_the_checks_so_the_process_does_not_wait_on_it(): void
     {
         $command = $this->wslScript();
