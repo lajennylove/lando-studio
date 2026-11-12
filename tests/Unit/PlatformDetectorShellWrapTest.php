@@ -9,6 +9,15 @@ use Tests\TestCase;
 
 class PlatformDetectorShellWrapTest extends TestCase
 {
+    public function test_powershell_steps_reload_path_from_the_registry_before_running(): void
+    {
+        $prefix = (new PlatformDetector)->powershellStepPrefix();
+
+        $this->assertStringContainsString("GetEnvironmentVariable('Path', 'Machine')", $prefix);
+        $this->assertStringContainsString("GetEnvironmentVariable('Path', 'User')", $prefix);
+        $this->assertStringContainsString('UTF8', $prefix);
+    }
+
     public function test_wrap_puts_log_redirect_outside_pipeline(): void
     {
         $p = new PlatformDetector;

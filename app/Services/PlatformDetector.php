@@ -157,6 +157,27 @@ class PlatformDetector
     }
 
     /**
+     * PowerShell snippet that reloads PATH from the registry before a step runs.
+     *
+     * The app's process copies PATH once at launch, so a tool installed later in the same session (Docker Desktop,
+     * for example) is missing from it, and `lando start` cannot find docker-credential-desktop. Reading the
+     * machine and user values again picks up what the installers wrote.
+     */
+    public function powershellPathPrefix(): string
+    {
+        return "\$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine').';'"
+            ." + [Environment]::GetEnvironmentVariable('Path', 'User'); ";
+    }
+
+    /**
+     * Everything a PowerShell step needs before its command: UTF-8 output and the current PATH.
+     */
+    public function powershellStepPrefix(): string
+    {
+        return $this->powershellUtf8Prefix().$this->powershellPathPrefix();
+    }
+
+    /**
      * Wrap a shell command so step logging does not steal stdout from inner redirects/pipes.
      *
      * On Unix:  (command) > 'logfile' 2>&1; echo '[LANDO_STEP_DONE]' >> 'logfile'
@@ -175,7 +196,7 @@ class PlatformDetector
         if ($this->isWindows()) {
             $log = str_replace("'", "''", $logFile); // escape PS single-quoted string
 
-            return $this->powershellUtf8Prefix()."& { {$command} } *> '{$log}'; Add-Content -Path '{$log}' -Value '{$marker}'";
+            return $this->powershellStepPrefix()."& { {$command} } *> '{$log}'; Add-Content -Path '{$log}' -Value '{$marker}'";
         }
 
         $log = escapeshellarg($logFile);

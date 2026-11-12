@@ -109,6 +109,14 @@ class WindowsDependencyInstallerTest extends TestCase
         $this->assertStringContainsString('exit 1', $command);
     }
 
+    public function test_docker_install_writes_the_installer_exit_code_to_the_install_log(): void
+    {
+        $command = $this->windowsInstaller()->getInstallCommand('docker');
+
+        $this->assertStringContainsString('-PassThru', $command);
+        $this->assertStringContainsString('exit code $($p.ExitCode)', $command);
+    }
+
     public function test_lando_install_patches_the_broken_arm64_check_and_uses_the_x64_cli(): void
     {
         $command = $this->windowsInstaller()->getInstallCommand('lando');

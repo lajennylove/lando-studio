@@ -58,7 +58,9 @@ class DependencyInstaller
                 '$url = "https://desktop.docker.com/win/main/$arch/Docker%20Desktop%20Installer.exe"',
                 '$f = "$env:TEMP\DockerDesktopInstaller.exe"',
                 'Invoke-WebRequest -Uri $url -OutFile $f -UseBasicParsing',
-                'Start-Process $f -Wait -ArgumentList @("install", "--quiet", "--accept-license", "--backend=wsl-2")',
+                // The exit code goes to the install log: the installer itself prints nothing with --quiet.
+                '$p = Start-Process $f -Wait -PassThru -ArgumentList @("install", "--quiet", "--accept-license", "--backend=wsl-2")',
+                'Write-Output "[Lando Studio] Docker Desktop installer finished with exit code $($p.ExitCode)"',
             ]),
 
             // get.docker.com auto-detects the distro (apt, yum, dnf, zypper, etc.), but not Arch-based ones.

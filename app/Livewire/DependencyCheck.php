@@ -215,7 +215,7 @@ class DependencyCheck extends Component
 
         if ($platform->isWindows()) {
             $log = addslashes($this->installLogFile);
-            $cmd = [...$platform->powershellArgs(), $platform->powershellUtf8Prefix()."& \"{$lando}\" setup --yes *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
+            $cmd = [...$platform->powershellArgs(), $platform->powershellStepPrefix()."& \"{$lando}\" setup --yes *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
         } else {
             $logArg = escapeshellarg($this->installLogFile);
             $markerArg = escapeshellarg($marker);
