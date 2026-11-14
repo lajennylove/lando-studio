@@ -6,10 +6,13 @@ namespace App\Livewire\Concerns;
 
 use App\Enums\SiteStatus;
 use App\Models\CommandLog;
+use App\Models\RepositoryCredential;
 use App\Models\Site;
 use App\Services\PlatformDetector;
 use App\Support\CommandLogErrorDetector;
+use App\Support\GitCredentials;
 use App\Support\LogContentUtf8;
+use App\Support\StepLogActivity;
 use Native\Laravel\Facades\ChildProcess;
 
 trait WithCommandExecution
@@ -76,6 +79,23 @@ trait WithCommandExecution
         $logDir = dirname($logFile);
         if (! is_dir($logDir)) {
             mkdir($logDir, 0755, true);
+        }
+
+        // Steps that need a saved repository login get it through a private file, never through the command text.
+        if (! empty($step['git_credentials_host'])) {
+            try {
+                $credential = RepositoryCredential::where('host', $step['git_credentials_host'])->first();
+                if (! $credential) {
+                    $this->failCurrentStep($site, "No saved login for {$step['git_credentials_host']}.");
+
+                    return;
+                }
+                GitCredentials::write(GitCredentials::fileFor('site-'.$site->id), $credential->username, $credential->password);
+            } catch (\Throwable $e) {
+                $this->failCurrentStep($site, 'Could not prepare the repository login: '.$e->getMessage());
+
+                return;
+            }
         }
 
         $command = $step['command'];
@@ -176,7 +196,7 @@ trait WithCommandExecution
         // Lando commands have long pauses during builds (apt-get, node install,
         // healthchecks, "Continuing in 10 seconds..." warnings).
         $inactivityTimeout = $this->steps[$this->currentStep]['inactivity_timeout'] ?? 30;
-        $lastModified = filemtime($logFile);
+        $lastModified = StepLogActivity::lastActivity($logFile);
         if ((time() - $lastModified) > $inactivityTimeout) {
             $this->completeCurrentStep($site, $content);
         }

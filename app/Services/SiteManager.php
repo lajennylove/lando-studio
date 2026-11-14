@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Enums\SiteStatus;
 use App\Livewire\Settings;
 use App\Models\RemoteSite;
+use App\Models\RepositoryCredential;
 use App\Models\Site;
+use App\Support\GitCredentials;
 use Illuminate\Support\Str;
 
 class SiteManager
@@ -20,6 +22,7 @@ class SiteManager
         private SshService $ssh,
         private DatabasePortAllocator $ports,
         private LandoYamlPortEditor $portEditor,
+        private RepositoryAccess $repositoryAccess,
     ) {}
 
     /**
@@ -154,14 +157,19 @@ class SiteManager
                 'step' => count($steps) + 2,
             ],
             [
+                'label' => 'Verifying WordPress core files',
+                'command' => $this->wpCoreCheckCommand($path),
+                'step' => count($steps) + 3,
+            ],
+            [
                 'label' => 'Creating WordPress config',
                 'command' => $this->lando->wpConfigCreate($path),
-                'step' => count($steps) + 3,
+                'step' => count($steps) + 4,
             ],
             [
                 'label' => 'Installing WordPress',
                 'command' => $this->lando->wpCoreInstall($path, $name, (string) $site->admin_username, $adminPass, (string) $site->admin_email),
-                'step' => count($steps) + 4,
+                'step' => count($steps) + 5,
             ],
         ]);
 
@@ -295,6 +303,15 @@ class SiteManager
                 'command' => $this->lando->wpCoreDownload($path),
                 'step' => count($steps) + 1,
             ],
+            // Plugins are copied before any WP-CLI step runs. WP-CLI loads every plugin, so one that is still being
+            // copied crashed the search-replace and theme steps with a fatal error (the database steps now also skip
+            // plugins, this keeps the order safe for anything that does load them).
+            [
+                'label' => 'Syncing plugins from remote',
+                'command' => $this->ssh->buildRsyncPluginsCommand($remoteSite, $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'plugins'),
+                'timeout' => 1800,
+                'step' => count($steps) + 2,
+            ],
             [
                 'label' => 'Dumping remote database',
                 'group' => 'Database Setup',
@@ -331,8 +348,9 @@ class SiteManager
             [
                 'label' => 'Replacing domain references',
                 'group' => 'Database Setup',
-                'hint' => 'Search-Replace prod-url for localdev-url.',
-                'timeout' => 1200,
+                'hint' => 'Search-Replace prod-url for localdev-url. Large databases can take 30 minutes or more.',
+                // WP-CLI scans every column of every table; a 4 GB database took over 24 minutes on Windows.
+                'timeout' => 3600,
                 'command' => $this->lando->wpSearchReplaceImported($path, "https://{$name}.lndo.site", $remoteSite->theme_name ?: null),
                 'step' => 8,
             ],
@@ -342,12 +360,6 @@ class SiteManager
                     ? $this->activateThemeCommand($path, $remoteSite->theme_name)
                     : ($this->platform->isWindows() ? 'Write-Host "No theme configured, skipping theme activation"' : 'echo "No theme configured, skipping theme activation"'),
                 'step' => 9,
-            ],
-            [
-                'label' => 'Syncing plugins from remote',
-                'command' => $this->ssh->buildRsyncPluginsCommand($remoteSite, $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'plugins'),
-                'timeout' => 1800,
-                'step' => 10,
             ],
             [
                 'label' => 'Configuring image proxy',
@@ -363,13 +375,21 @@ class SiteManager
         $themeBranch = $site->theme_branch ?: self::THEME_BRANCH;
 
         $stepNum = 12;
-        $steps[] = [
+        $cloneStep = [
             'label' => 'Cloning theme repository',
             'command' => $remoteSite->repo_url
-                ? $this->gitCloneCommand($path, $remoteSite->repo_url, $remoteSite->theme_name)
+                ? $this->gitCloneCommand($path, $remoteSite->repo_url, $remoteSite->theme_name, $site)
                 : ($this->platform->isWindows() ? 'Write-Host "No repo URL configured, skipping theme clone"' : 'echo "No repo URL configured, skipping theme clone"'),
             'step' => $stepNum++,
         ];
+        $savedLogin = $remoteSite->repo_url
+            ? RepositoryCredential::where('host', $this->repositoryAccess->hostFor($remoteSite->repo_url))->first()
+            : null;
+        if ($savedLogin) {
+            // The runner writes the saved login to a private file just before this step starts.
+            $cloneStep['git_credentials_host'] = $savedLogin->host;
+        }
+        $steps[] = $cloneStep;
 
         if ($cloneTheme) {
             $themePath = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes'.DIRECTORY_SEPARATOR.$remoteSite->theme_name;
@@ -478,15 +498,18 @@ class SiteManager
 
     private function activateThemeCommand(string $path, string $themeName): string
     {
+        // These only write two options; loading the plugins and the theme (half-copied, or without vendor yet) can crash them.
+        $skip = LandoService::WP_SKIP_CODE;
+
         if ($this->platform->isWindows()) {
             $lando = $this->lando->getLandoPath();
             $psLando = '& "'.str_replace('"', '""', $lando).'"';
             $psTheme = str_replace("'", "''", $themeName);
 
-            return "Set-Location \"{$path}\"; {$psLando} wp option update template '{$psTheme}' --path=wp; {$psLando} wp option update stylesheet '{$psTheme}' --path=wp";
+            return "Set-Location \"{$path}\"; {$psLando} wp option update template '{$psTheme}' --path=wp {$skip}; {$psLando} wp option update stylesheet '{$psTheme}' --path=wp {$skip}";
         }
 
-        return 'cd '.escapeshellarg($path)." && {$this->lando->getLandoPath()} wp option update template ".escapeshellarg($themeName)." --path=wp && {$this->lando->getLandoPath()} wp option update stylesheet ".escapeshellarg($themeName).' --path=wp';
+        return 'cd '.escapeshellarg($path)." && {$this->lando->getLandoPath()} wp option update template ".escapeshellarg($themeName)." --path=wp {$skip} && {$this->lando->getLandoPath()} wp option update stylesheet ".escapeshellarg($themeName)." --path=wp {$skip}";
     }
 
     private function htaccessCommand(string $path, ?string $remoteDomain): string
@@ -509,31 +532,104 @@ class SiteManager
         return 'echo '.escapeshellarg($content)." > {$path}/wp/.htaccess";
     }
 
-    private function gitCloneCommand(string $path, string $repoUrl, string $themeName): string
+    /**
+     * Waits until the WordPress core files are on disk and stable, then lets the next step run. The download
+     * writes files without printing anything, and the app moves on after about 30 seconds of silence, so this
+     * step prints a line every 5 seconds to stay visible until the files are complete. It fails after 5 minutes.
+     */
+    private function wpCoreCheckCommand(string $path): string
     {
         if ($this->platform->isWindows()) {
-            $themesDir = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes';
+            $root = str_replace("'", "''", $path.'\wp');
 
-            return "Set-Location \"{$themesDir}\"; \$env:GIT_TERMINAL_PROMPT='0'; git clone --progress {$repoUrl} {$themeName}; Write-Host 'Theme cloned successfully.'";
+            // No exit here: exit ends the PowerShell process, and the step log then never gets its completion marker.
+            return "\$d = '{$root}'; \$deadline = (Get-Date).AddSeconds(300); \$last = -1; \$stable = 0; \$done = \$false; "
+                .'while ((Get-Date) -lt $deadline) { '
+                .'$n = (Get-ChildItem $d -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count; '
+                ."if ((Test-Path (Join-Path \$d 'wp-includes\\compat.php')) -and (Test-Path (Join-Path \$d 'wp-admin')) -and \$n -eq \$last) { \$stable++ } else { \$stable = 0 }; "
+                .'if ($stable -ge 2) { $done = $true; break }; '
+                .'$last = $n; Write-Host "Waiting for WordPress core files: $n so far"; Start-Sleep -Seconds 5 }; '
+                .'if (-not $done) { throw \'WordPress core files did not finish downloading\' }; '
+                .'Write-Host "WordPress core files OK ($n files)"';
         }
 
-        // GIT_TERMINAL_PROMPT=0 makes a missing login fail at once. Without it git waits for a username that
-        // nothing can answer, and the step stops with no output.
-        return "cd {$path}/wp/wp-content/themes && GIT_TERMINAL_PROMPT=0 git clone --progress {$repoUrl} {$themeName} && echo \"Theme cloned successfully.\"";
+        $root = escapeshellarg($path.'/wp');
+
+        return "d={$root}; last=-1; stable=0; for i in \$(seq 1 60); do "
+            .'n=$(find "$d" -type f 2>/dev/null | wc -l); '
+            .'if [ -f "$d/wp-includes/compat.php" ] && [ -d "$d/wp-admin" ] && [ "$n" = "$last" ]; then stable=$((stable+1)); else stable=0; fi; '
+            .'if [ "$stable" -ge 2 ]; then echo "WordPress core files OK ($n files)"; exit 0; fi; '
+            .'last=$n; echo "Waiting for WordPress core files: $n so far"; sleep 5; done; '
+            .'echo "WordPress core files did not finish downloading"; exit 1';
     }
 
+    private function gitCloneCommand(string $path, string $repoUrl, string $themeName, Site $site): string
+    {
+        $credentialFile = GitCredentials::fileFor('site-'.$site->id);
+        $hasSavedLogin = RepositoryCredential::where('host', $this->repositoryAccess->hostFor($repoUrl))->exists();
+
+        if ($this->platform->isWindows()) {
+            $themesDir = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes';
+            $login = $hasSavedLogin
+                ? "\$env:GIT_ASKPASS='".str_replace("'", "''", GitCredentials::askpassPath())."'; \$env:LANDO_STUDIO_GIT_CREDENTIALS='".str_replace("'", "''", $credentialFile)."'; "
+                : '';
+            $cleanup = $hasSavedLogin ? "; Remove-Item -Force '".str_replace("'", "''", $credentialFile)."' -ErrorAction SilentlyContinue" : '';
+            $name = str_replace("'", "''", $themeName);
+
+            // A theme folder left from an earlier run is fetched, not cloned over: `git clone` fails on it, and the
+            // checkout step that follows would then report "up to date" against a stale origin/main. A non-empty
+            // folder that is not a git repository is never touched.
+            return "Set-Location \"{$themesDir}\"; {$login}\$env:GIT_TERMINAL_PROMPT='0'; "
+                ."if (Test-Path -LiteralPath '{$name}\\.git') { Write-Host 'Theme folder already exists, fetching its latest commits instead of cloning.'; Set-Location '{$name}'; git fetch --progress origin; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme fetched.' } } "
+                ."elseif ((Test-Path -LiteralPath '{$name}') -and ((Get-ChildItem -Force -LiteralPath '{$name}' | Measure-Object).Count -gt 0)) { Write-Host '[Lando Studio ERROR] The theme folder already exists and is not a git repository, so it was not touched. Remove it or use another site name.'; \$code = 1 } "
+                ."else { git clone --progress {$repoUrl} {$themeName}; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme cloned successfully.' } }"
+                ."{$cleanup}; if (\$code -ne 0) { throw 'git clone failed' }";
+        }
+
+        $themes = escapeshellarg("{$path}/wp/wp-content/themes");
+        $dir = escapeshellarg($themeName);
+        // GIT_TERMINAL_PROMPT=0 makes a missing login fail at once. Without it git waits for a username that
+        // nothing can answer, and the step stops with no output.
+        $env = ($hasSavedLogin ? GitCredentials::shellPrefix($credentialFile) : '').'GIT_TERMINAL_PROMPT=0 ';
+
+        $acquire = "if [ -d {$dir}/.git ]; then echo 'Theme folder already exists, fetching its latest commits instead of cloning.'; "
+            ."(cd {$dir} && {$env}git fetch --progress origin) && echo 'Theme fetched.'; "
+            ."elif [ -n \"\$(ls -A {$dir} 2>/dev/null)\" ]; then echo '[Lando Studio ERROR] The theme folder already exists and is not a git repository, so it was not touched. Remove it or use another site name.' >&2; false; "
+            ."else {$env}git clone --progress {$repoUrl} {$themeName} && echo \"Theme cloned successfully.\"; fi";
+
+        if ($hasSavedLogin) {
+            return "cd {$themes} && { {$acquire}; }; status=\$?; rm -f ".escapeshellarg($credentialFile).' && [ "$status" -eq 0 ]';
+        }
+
+        return "cd {$themes} && { {$acquire}; }";
+    }
+
+    /**
+     * Switch the theme to a branch and fast-forward it to origin/<branch>.
+     *
+     * The clone step has just cloned or fetched, so origin/<branch> is current. Without the fast-forward a theme
+     * folder from an earlier run stayed on its old commit and the step still said "Switched to branch".
+     * A branch that cannot be fast-forwarded (local commits) fails the step with a [Lando Studio ERROR] line.
+     */
     private function gitCheckoutCommand(string $path, string $branch): string
     {
+        $error = "[Lando Studio ERROR] Branch {$branch} could not be fast-forwarded to origin/{$branch} (local commits or changes are in the way). Update the theme folder by hand, then retry.";
+
         if ($this->platform->isWindows()) {
             $quoted = "'".str_replace("'", "''", $branch)."'";
+            $remote = "'origin/".str_replace("'", "''", $branch)."'";
 
-            return "Set-Location \"{$path}\"; git checkout {$quoted} 2>\$null; if (\$LASTEXITCODE -ne 0) { Write-Host ('Branch {$branch} not found, staying on the current branch') } else { Write-Host ('Switched to branch: {$branch}') }";
+            return "Set-Location \"{$path}\"; git checkout {$quoted} 2>\$null; if (\$LASTEXITCODE -ne 0) { Write-Host ('Branch {$branch} not found, staying on the current branch') } "
+                ."else { git merge --ff-only {$remote}; if (\$LASTEXITCODE -ne 0) { Write-Host '{$error}' } else { Write-Host ('Switched to branch: {$branch}') } }";
         }
 
         // A repo without this branch keeps its current branch instead of failing the steps after it.
         $quoted = escapeshellarg($branch);
+        $remote = escapeshellarg('origin/'.$branch);
 
-        return "cd {$path} && (git checkout {$quoted} 2>/dev/null || echo \"Branch {$branch} not found, staying on \$(git branch --show-current)\") && echo \"On branch: \$(git branch --show-current)\"";
+        return "cd {$path} && if git checkout {$quoted} 2>/dev/null; then "
+            ."if git merge --ff-only {$remote}; then echo \"On branch: \$(git branch --show-current)\"; else echo ".escapeshellarg($error).'; false; fi; '
+            ."else echo \"Branch {$branch} not found, staying on \$(git branch --show-current)\"; fi";
     }
 
     /**
@@ -660,8 +756,9 @@ class SiteManager
             ],
             [
                 'label' => 'Replacing domain references',
-                'hint' => 'Search-replace prod URL → local URL.',
-                'timeout' => 1200,
+                'hint' => 'Search-replace prod URL → local URL. Large databases can take 30 minutes or more.',
+                // WP-CLI scans every column of every table; a 4 GB database took over 24 minutes on Windows.
+                'timeout' => 3600,
                 'command' => $this->lando->wpSearchReplaceImported($path, $localUrl, $localTheme),
                 'step' => 6,
             ],

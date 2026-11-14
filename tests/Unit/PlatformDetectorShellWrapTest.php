@@ -18,6 +18,38 @@ class PlatformDetectorShellWrapTest extends TestCase
         $this->assertStringContainsString('UTF8', $prefix);
     }
 
+    public function test_path_reload_joins_machine_and_user_path_with_a_string_not_member_access(): void
+    {
+        $prefix = (new PlatformDetector)->powershellPathPrefix();
+
+        // `...('Machine').';'` is member access in PowerShell: null, so the machine PATH was lost.
+        $this->assertStringNotContainsString(").';'", $prefix);
+        $this->assertStringContainsString("'Machine') + ';' + ", $prefix);
+    }
+
+    public function test_windows_wrapper_writes_a_heartbeat_to_a_side_file_while_the_command_runs(): void
+    {
+        $windows = new class extends PlatformDetector
+        {
+            public function isWindows(): bool
+            {
+                return true;
+            }
+        };
+
+        $wrapped = $windows->wrapCommandWithLogRedirect('lando composer install', 'C:\\logs\\step.log');
+
+        // The *> redirect holds the log open, so the heartbeat goes to <log>.hb, not into the log itself.
+        $this->assertStringContainsString('Start-Job', $wrapped);
+        $this->assertStringContainsString("'C:\\logs\\step.log.hb'", $wrapped);
+        $this->assertStringContainsString("& { lando composer install } *> 'C:\\logs\\step.log'", $wrapped);
+        // The job is stopped and the side file removed before the completion marker is written.
+        $this->assertLessThan(
+            strpos($wrapped, 'Add-Content -Path'),
+            strpos($wrapped, 'Stop-Job'),
+        );
+    }
+
     public function test_wrap_puts_log_redirect_outside_pipeline(): void
     {
         $p = new PlatformDetector;

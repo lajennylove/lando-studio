@@ -39,6 +39,9 @@ class WpConfigGeneratorTest extends TestCase
             $this->assertStringContainsString('$table_prefix = \'wp_\';', $body);
             $this->assertStringContainsString('AUTH_KEY', $body);
             $this->assertStringContainsString('wp-settings.php', $body);
+            // A cloned local site must never update itself (an interrupted core update broke a clone).
+            $this->assertStringContainsString("define( 'AUTOMATIC_UPDATER_DISABLED', true );", $body);
+            $this->assertStringContainsString("define( 'WP_AUTO_UPDATE_CORE', false );", $body);
         } finally {
             @unlink($root.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-config.php');
             @rmdir($root.DIRECTORY_SEPARATOR.'wp');

@@ -13,6 +13,7 @@ use App\Services\PlatformDetector;
 use App\Services\RemoteConnectionVerifier;
 use App\Services\SiteManager;
 use App\Support\LogContentUtf8;
+use App\Support\StepLogActivity;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
@@ -186,8 +187,13 @@ class SiteDashboard extends Component
             return;
         }
 
-        $running = $lando->isRunning($this->site->path, $this->site->name);
-        $newStatus = $running ? SiteStatus::Running : SiteStatus::Stopped;
+        $states = $lando->appRunningStates();
+        if ($states === null) {
+            // lando list gave no answer (Docker stopped or starting). Keep the stored status instead of showing "stopped".
+            return;
+        }
+
+        $newStatus = ($states[$this->site->name] ?? false) ? SiteStatus::Running : SiteStatus::Stopped;
 
         if ($this->site->status !== $newStatus && $this->site->status !== SiteStatus::Creating) {
             $this->site->update(['status' => $newStatus]);
@@ -642,7 +648,7 @@ class SiteDashboard extends Component
 
         // ── 3. Inactivity fallback — marker not written (crash/kill) ────────
         if (! $actionDone) {
-            $lastModified = filemtime($logFile);
+            $lastModified = StepLogActivity::lastActivity($logFile);
             $actionDone = (time() - $lastModified) > 30;
         }
 

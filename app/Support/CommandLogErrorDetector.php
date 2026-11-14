@@ -27,6 +27,7 @@ final class CommandLogErrorDetector
             'Dump file is too small or empty',
             'mysqldump may have failed',
             '[Lando Studio ERROR]',
+            'ERROR ==>',
         ];
 
         foreach ($fatalPatterns as $pattern) {

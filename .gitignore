@@ -38,3 +38,8 @@ coverage.xml
 *.swp
 *.swo
 *~
+
+# Local DevOps token for the inventory sync (never commit)
+/storage/devops-token
+/storage/cloudways-token
+/storage/app-key

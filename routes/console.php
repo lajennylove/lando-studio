@@ -114,6 +114,20 @@ Artisan::command('lando-dev:clone-wp-config {path : Absolute site root (contains
         if ($result->successful()) {
             $log->info('wp config create succeeded');
             $this->info('Generated wp/wp-config.php via lando wp config create.');
+
+            // The PHP generator writes these itself; wp config create does not. A clone that can update itself
+            // started a core update on a page visit and was left half updated.
+            foreach (WpConfigGenerator::LOCAL_ONLY_CONSTANTS as $name => $value) {
+                $set = Process::path($path)->timeout(60)->run("{$lando} wp config set {$name} {$value} --raw --path=wp");
+                if (! $set->successful()) {
+                    $log->warning('could not set local-only constant', [
+                        'constant' => $name,
+                        'exit_code' => $set->exitCode(),
+                        'output' => trim($set->output().$set->errorOutput()),
+                    ]);
+                    $this->warn("Could not set {$name} in wp-config.php; set it by hand to stop the site updating itself.");
+                }
+            }
         } else {
             $log->warning('lando wp config create failed, falling back to PHP generator', [
                 'exit_code' => $result->exitCode(),

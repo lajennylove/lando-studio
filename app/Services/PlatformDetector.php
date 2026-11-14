@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Livewire\Settings;
+use App\Support\StepLogActivity;
 
 class PlatformDetector
 {
@@ -162,10 +163,14 @@ class PlatformDetector
      * The app's process copies PATH once at launch, so a tool installed later in the same session (Docker Desktop,
      * for example) is missing from it, and `lando start` cannot find docker-credential-desktop. Reading the
      * machine and user values again picks up what the installers wrote.
+     *
+     * The two values are joined with `+ ';' +`. Writing `...('Machine').';'` instead is member access on a property
+     * named ";" in PowerShell: it returns null, drops the machine PATH (System32, Docker) and leaves only the user
+     * PATH, so `powershell` and `docker` could not be found and lando setup failed.
      */
     public function powershellPathPrefix(): string
     {
-        return "\$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine').';'"
+        return "\$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';'"
             ." + [Environment]::GetEnvironmentVariable('Path', 'User'); ";
     }
 
@@ -195,8 +200,18 @@ class PlatformDetector
 
         if ($this->isWindows()) {
             $log = str_replace("'", "''", $logFile); // escape PS single-quoted string
+            $heartbeat = $log.StepLogActivity::HEARTBEAT_SUFFIX;
 
-            return $this->powershellStepPrefix()."& { {$command} } *> '{$log}'; Add-Content -Path '{$log}' -Value '{$marker}'";
+            // A background job appends to <log>.hb every 15 s while the command runs. The *> redirect holds the log
+            // itself open, so the heartbeat cannot go there, and the runner reads the newer of the two modified times
+            // (StepLogActivity). Without it, any silent command (composer, wp-cli) was marked finished after 30 s.
+            // The job dies with this PowerShell process, so a crashed step still goes quiet and is caught.
+            $start = '$landoHb = Start-Job -ErrorAction SilentlyContinue -ArgumentList \''.$heartbeat.'\' -ScriptBlock '
+                .'{ param($f) while ($true) { Start-Sleep -Seconds 15; Add-Content -LiteralPath $f -Value (Get-Date -Format o) } }; ';
+            $stop = 'if ($landoHb) { Stop-Job $landoHb -ErrorAction SilentlyContinue; Remove-Job $landoHb -Force -ErrorAction SilentlyContinue }; '
+                ."Remove-Item -LiteralPath '{$heartbeat}' -ErrorAction SilentlyContinue; ";
+
+            return $this->powershellStepPrefix().$start."& { {$command} } *> '{$log}'; {$stop}Add-Content -Path '{$log}' -Value '{$marker}'";
         }
 
         $log = escapeshellarg($logFile);
