@@ -14,6 +14,7 @@ use App\Services\SiteManager;
 use App\Support\CommandLogErrorDetector;
 use App\Support\GitCredentials;
 use App\Support\LogContentUtf8;
+use App\Support\RefusedDatabasePorts;
 use App\Support\StepLogActivity;
 use Illuminate\Support\Facades\Log;
 use Native\Laravel\Facades\ChildProcess;
@@ -295,6 +296,7 @@ trait WithCommandExecution
         Log::info('WithCommandExecution::recoverFromPortConflict reassigned the database port', ['site' => $site->id, 'from' => $refused, 'to' => $newPort]);
 
         $this->refusedPorts[] = $refused;
+        app(RefusedDatabasePorts::class)->add($refused);
         $this->rebuildThisStep = true;
 
         CommandLog::where('site_id', $site->id)

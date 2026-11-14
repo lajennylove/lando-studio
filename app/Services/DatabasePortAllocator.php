@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\Site;
+use App\Support\RefusedDatabasePorts;
 
 /**
  * Chooses the host port each project publishes its database on, so no two Lando projects collide.
@@ -30,6 +31,7 @@ final class DatabasePortAllocator
      * Next free port at or above the configured start, skipping every claimed, reserved or bound port.
      * Pass $projectPath when re-allocating an existing project so its own claims are ignored.
      * Pass $skip for ports Docker refused although nothing on the host listens on them (a stale reservation).
+     * Ports remembered by RefusedDatabasePorts are always skipped too.
      *
      * @param  list<int>  $skip
      */
@@ -37,6 +39,7 @@ final class DatabasePortAllocator
     {
         $start = (int) config('lando_dev.defaults.database_forward_port_start', 32_787);
         $self = $projectPath === null ? null : $this->normalize($projectPath);
+        $skip = [...$skip, ...app(RefusedDatabasePorts::class)->all()];
 
         for ($port = $start; $port <= 65_535; $port++) {
             if (in_array($port, $skip, true) || $this->isClaimedByOthers($port, $self) || $this->isBound($port)) {

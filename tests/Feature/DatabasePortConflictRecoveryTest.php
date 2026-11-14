@@ -31,7 +31,10 @@ class DatabasePortConflictRecoveryTest extends TestCase
         $platform->shouldReceive('defaultCodePath')->andReturn($this->codePath);
         $this->app->instance(PlatformDetector::class, $platform);
 
-        config(['lando_dev.defaults.database_forward_port_start' => 41_100]);
+        config([
+            'lando_dev.defaults.database_forward_port_start' => 41_100,
+            'lando_dev.refused_ports_file' => sys_get_temp_dir().DIRECTORY_SEPARATOR.'ld_conflict_none_'.uniqid().'.json',
+        ]);
     }
 
     protected function tearDown(): void
