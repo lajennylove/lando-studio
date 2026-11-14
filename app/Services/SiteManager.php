@@ -709,9 +709,18 @@ class SiteManager
             // lando destroy runs Set-Location into the site, and Windows will not delete a folder that a process is
             // standing in, so the shell first moves to the user folder. The result is checked, since rmdir can fail
             // without stopping the script.
+            // The folder goes whether or not any container is left. Up to three passes run: plain rmdir, then rmdir with the
+            // \\?\ prefix (deep node_modules paths exceed MAX_PATH), with a pause between passes for handles Docker still holds.
+            // The destroy only counts as finished when the folder is gone (see destroyLogHasFatalError).
             // PS5 doesn't support &&; use ; to unconditionally run the checks.
-            return 'Start-Sleep -Seconds 2; Set-Location $env:USERPROFILE; cmd /c rmdir /s /q "'.$path.'"; '
-                .'if (Test-Path -LiteralPath "'.$path.'") { Write-Host \'Site folder could not be removed. Close any program using it, then delete it.\' } '
+            $literal = "'".str_replace("'", "''", $path)."'";
+
+            return 'Start-Sleep -Seconds 2; Set-Location $env:USERPROFILE; $lsPath = '.$literal.'; '
+                .'foreach ($lsPass in 1..3) { if (-not (Test-Path -LiteralPath $lsPath)) { break }; '
+                .'cmd /c rmdir /s /q "$lsPath" 2>$null; '
+                .'if (Test-Path -LiteralPath $lsPath) { cmd /c rmdir /s /q "\\\\?\\$lsPath" 2>$null }; '
+                .'if (Test-Path -LiteralPath $lsPath) { Start-Sleep -Seconds 3 } }; '
+                .'if (Test-Path -LiteralPath $lsPath) { Write-Host \'Site folder could not be removed. Close any program using it, then delete it.\' } '
                 .'else { Write-Host \'Site folder removed.\' }';
         }
 

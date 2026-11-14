@@ -262,10 +262,9 @@ class SiteDashboard extends Component
         $destroyCmd = $manager->destroySite($this->site);
         $deleteCmd = $manager->getDeletePath($this->site);
 
-        // PS5 doesn't support &&; use ; which always runs both commands.
-        $platform = app(PlatformDetector::class);
-        $separator = $platform->isWindows() ? '; ' : ' && ';
-        $combined = "{$destroyCmd}{$separator}{$deleteCmd}";
+        // Always run both: the folder must go even when lando destroy fails or no container exists any more.
+        // (PS5 has no &&; ';' works in every shell.)
+        $combined = "{$destroyCmd}; {$deleteCmd}";
 
         $this->runDestroyAction($combined);
     }
@@ -699,6 +698,7 @@ class SiteDashboard extends Component
             'Error response from daemon',
             'Cannot connect to the Docker daemon',
             'EACCES: permission denied',
+            'Site folder could not be removed',
         ];
 
         foreach ($fatalPatterns as $pattern) {

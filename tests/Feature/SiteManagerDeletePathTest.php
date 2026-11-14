@@ -61,6 +61,21 @@ class SiteManagerDeletePathTest extends TestCase
         $this->assertStringContainsString('could not be removed', $command);
     }
 
+    public function test_windows_delete_retries_and_falls_back_to_the_long_path_form(): void
+    {
+        $platform = Mockery::mock(PlatformDetector::class);
+        $platform->shouldReceive('isWindows')->andReturn(true);
+        $platform->shouldReceive('normalizePathSeparators')->andReturnUsing(fn (string $path): string => str_replace('/', '\\', $path));
+        $this->app->instance(PlatformDetector::class, $platform);
+        $site = new Site(['path' => "C:\\Users\\dev\\code\\sites\\it's"]);
+
+        $command = app(SiteManager::class)->getDeletePath($site);
+
+        $this->assertStringContainsString('foreach ($lsPass in 1..3)', $command);
+        $this->assertStringContainsString('rmdir /s /q "\\\\?\\$lsPath"', $command);
+        $this->assertStringContainsString("'C:\\Users\\dev\\code\\sites\\it''s'", $command, 'a quote in the path must be doubled inside the PowerShell literal');
+    }
+
     public function test_delete_path_with_a_quote_is_escaped(): void
     {
         $this->useOs('linux');
