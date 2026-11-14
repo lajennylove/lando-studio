@@ -78,8 +78,11 @@ class SiteManager
      * (so the failure is left alone). Nothing listens on a stale Docker reservation, so the usual bound-port
      * probe cannot see it: the refused port is skipped explicitly. The caller must run `lando rebuild -y`
      * afterwards, because existing containers keep the port they were created with.
+     * Pass $alreadyRefused with the ports Docker refused earlier in the same run so none is chosen again.
+     *
+     * @param  list<int>  $alreadyRefused
      */
-    public function reassignDatabasePortAfterConflict(Site $site, int $refusedPort): ?int
+    public function reassignDatabasePortAfterConflict(Site $site, int $refusedPort, array $alreadyRefused = []): ?int
     {
         $yamlPath = rtrim($site->path, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'.lando.yml';
 
@@ -93,7 +96,7 @@ class SiteManager
             return null;
         }
 
-        $newPort = $this->ports->allocate($site->path, [$refusedPort]);
+        $newPort = $this->ports->allocate($site->path, [...$alreadyRefused, $refusedPort]);
 
         $this->portEditor->setDatabasePort($yamlPath, $newPort);
 

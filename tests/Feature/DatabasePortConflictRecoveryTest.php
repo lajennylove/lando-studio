@@ -80,6 +80,16 @@ class DatabasePortConflictRecoveryTest extends TestCase
         $this->assertStringContainsString('portforward: true', $yaml);
     }
 
+    public function test_earlier_refused_ports_are_not_chosen_again(): void
+    {
+        $site = $this->site(41_102);
+
+        $new = app(SiteManager::class)->reassignDatabasePortAfterConflict($site, 41_102, [41_100, 41_101]);
+
+        $this->assertSame(41_103, $new);
+        $this->assertStringContainsString('portforward: 41103', (string) file_get_contents($site->path.DIRECTORY_SEPARATOR.'.lando.yml'));
+    }
+
     public function test_a_refused_port_that_is_not_the_database_port_is_left_alone(): void
     {
         $site = $this->site(41_100);

@@ -23,6 +23,9 @@ trait WithCommandExecution
     /** Keep snapshot size bounded; full logs remain in storage/logs. */
     private const LIVEWIRE_OUTPUT_CAP_BYTES = 100_000;
 
+    /** How many times one run may move the database port after Docker refuses it. */
+    private const MAX_PORT_RETRIES = 5;
+
     public int $currentStep = 0;
 
     public int $totalSteps = 0;
@@ -39,8 +42,8 @@ trait WithCommandExecution
 
     public ?float $executionStartedAt = null;
 
-    /** True once a Docker port conflict was repaired in this run, so it is retried only once. */
-    public bool $portConflictHandled = false;
+    /** Database ports Docker refused in this run; each repair skips all of them. A stale block can span several ports. */
+    public array $refusedPorts = [];
 
     /** The next step runs as `lando rebuild -y` because the database port changed. */
     public bool $rebuildThisStep = false;
@@ -261,13 +264,14 @@ trait WithCommandExecution
 
     /**
      * When Docker refuses the site's database port ("port is already allocated"), moves the site to a free port
-     * and runs the failed step again once, as `lando rebuild -y`. Returns true when the step was restarted.
+     * and runs the failed step again as `lando rebuild -y`. Returns true when the step was restarted.
      * Docker can hold a stale reservation that nothing on the host listens on, so the earlier bound-port probe
-     * cannot catch it. Only the site's own database port is changed, and only one retry is made per run.
+     * cannot catch it, and stale reservations often come in blocks. Only the site's own database port is changed,
+     * every refused port is remembered, and at most MAX_PORT_RETRIES repairs are made per run.
      */
     private function recoverFromPortConflict(Site $site, string $content): bool
     {
-        if ($this->portConflictHandled) {
+        if (count($this->refusedPorts) >= self::MAX_PORT_RETRIES) {
             return false;
         }
 
@@ -277,7 +281,7 @@ trait WithCommandExecution
         }
 
         try {
-            $newPort = app(SiteManager::class)->reassignDatabasePortAfterConflict($site, $refused);
+            $newPort = app(SiteManager::class)->reassignDatabasePortAfterConflict($site, $refused, $this->refusedPorts);
         } catch (\Throwable $e) {
             Log::warning('WithCommandExecution::recoverFromPortConflict could not reassign the port', ['site' => $site->id, 'error' => $e->getMessage()]);
 
@@ -290,7 +294,7 @@ trait WithCommandExecution
 
         Log::info('WithCommandExecution::recoverFromPortConflict reassigned the database port', ['site' => $site->id, 'from' => $refused, 'to' => $newPort]);
 
-        $this->portConflictHandled = true;
+        $this->refusedPorts[] = $refused;
         $this->rebuildThisStep = true;
 
         CommandLog::where('site_id', $site->id)
