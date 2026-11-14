@@ -73,6 +73,37 @@ class SiteManager
     }
 
     /**
+     * Moves the database portforward off a port Docker refused ("port is already allocated"), in the YAML and in
+     * the site record. Returns the new port, or null when the refused port is not this site's database port
+     * (so the failure is left alone). Nothing listens on a stale Docker reservation, so the usual bound-port
+     * probe cannot see it: the refused port is skipped explicitly. The caller must run `lando rebuild -y`
+     * afterwards, because existing containers keep the port they were created with.
+     */
+    public function reassignDatabasePortAfterConflict(Site $site, int $refusedPort): ?int
+    {
+        $yamlPath = rtrim($site->path, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'.lando.yml';
+
+        if (! file_exists($yamlPath)) {
+            return null;
+        }
+
+        $current = app(LandoYamlParser::class)->parse($yamlPath)['db_port'] ?? null;
+
+        if ($current !== $refusedPort) {
+            return null;
+        }
+
+        $newPort = $this->ports->allocate($site->path, [$refusedPort]);
+
+        $this->portEditor->setDatabasePort($yamlPath, $newPort);
+
+        $site->db_port = $newPort;
+        $site->save();
+
+        return $newPort;
+    }
+
+    /**
      * Lowest database port no other project publishes and nothing is listening on (avoids Docker bind conflicts).
      * Pass the project's path when re-allocating an existing project so its own claims are ignored.
      */

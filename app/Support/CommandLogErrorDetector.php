@@ -48,6 +48,19 @@ final class CommandLogErrorDetector
         return false;
     }
 
+    /**
+     * The host port Docker refused to publish ("... 127.0.0.1:32790 failed: port is already allocated"), or null
+     * when the log has no such error. A stale reservation inside Docker shows up here but not as a listener.
+     */
+    public static function conflictingPort(string $content): ?int
+    {
+        if (preg_match('/:(\d{2,5})\s+failed:\s+port is already allocated/i', $content, $match)) {
+            return (int) $match[1];
+        }
+
+        return null;
+    }
+
     private static function tailLines(string $content, int $lines): string
     {
         $allLines = explode("\n", trim($content));

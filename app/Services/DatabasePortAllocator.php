@@ -29,14 +29,17 @@ final class DatabasePortAllocator
     /**
      * Next free port at or above the configured start, skipping every claimed, reserved or bound port.
      * Pass $projectPath when re-allocating an existing project so its own claims are ignored.
+     * Pass $skip for ports Docker refused although nothing on the host listens on them (a stale reservation).
+     *
+     * @param  list<int>  $skip
      */
-    public function allocate(?string $projectPath = null): int
+    public function allocate(?string $projectPath = null, array $skip = []): int
     {
         $start = (int) config('lando_dev.defaults.database_forward_port_start', 32_787);
         $self = $projectPath === null ? null : $this->normalize($projectPath);
 
         for ($port = $start; $port <= 65_535; $port++) {
-            if ($this->isClaimedByOthers($port, $self) || $this->isBound($port)) {
+            if (in_array($port, $skip, true) || $this->isClaimedByOthers($port, $self) || $this->isBound($port)) {
                 continue;
             }
 

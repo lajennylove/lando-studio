@@ -8,11 +8,14 @@ use App\Enums\SiteStatus;
 use App\Models\CommandLog;
 use App\Models\RepositoryCredential;
 use App\Models\Site;
+use App\Services\LandoService;
 use App\Services\PlatformDetector;
+use App\Services\SiteManager;
 use App\Support\CommandLogErrorDetector;
 use App\Support\GitCredentials;
 use App\Support\LogContentUtf8;
 use App\Support\StepLogActivity;
+use Illuminate\Support\Facades\Log;
 use Native\Laravel\Facades\ChildProcess;
 
 trait WithCommandExecution
@@ -35,6 +38,12 @@ trait WithCommandExecution
     public bool $executionFailed = false;
 
     public ?float $executionStartedAt = null;
+
+    /** True once a Docker port conflict was repaired in this run, so it is retried only once. */
+    public bool $portConflictHandled = false;
+
+    /** The next step runs as `lando rebuild -y` because the database port changed. */
+    public bool $rebuildThisStep = false;
 
     public function executeStepSequence(array $stepDefinitions, Site $site): void
     {
@@ -98,7 +107,21 @@ trait WithCommandExecution
             }
         }
 
-        $command = $step['command'];
+        if ($this->rebuildThisStep) {
+            // After a database port change the containers must be recreated, so the start step becomes a rebuild.
+            $this->rebuildThisStep = false;
+            $command = app(LandoService::class)->rebuild($site->path);
+        } else {
+            // Same rule as the Start button: never start on a database port something already listens on.
+            if (($step['label'] ?? '') === 'Starting Lando environment') {
+                try {
+                    app(SiteManager::class)->ensurePortAvailable($site);
+                } catch (\Throwable $e) {
+                    Log::warning('WithCommandExecution::executeNextStep port check failed', ['site' => $site->id, 'error' => $e->getMessage()]);
+                }
+            }
+            $command = $step['command'];
+        }
         $alias = 'lando-site-'.$site->id.'-step-'.$this->currentStep.'-'.uniqid();
 
         CommandLog::create([
@@ -207,6 +230,10 @@ trait WithCommandExecution
         $hasError = CommandLogErrorDetector::indicatesFailure($content);
 
         if ($hasError) {
+            if ($this->recoverFromPortConflict($site, $content)) {
+                return;
+            }
+
             $this->failCurrentStep($site, $this->tailLines($content, 50));
 
             return;
@@ -230,6 +257,54 @@ trait WithCommandExecution
 
         $this->currentStep++;
         $this->executeNextStep($this->getStepDefinitions(), $site);
+    }
+
+    /**
+     * When Docker refuses the site's database port ("port is already allocated"), moves the site to a free port
+     * and runs the failed step again once, as `lando rebuild -y`. Returns true when the step was restarted.
+     * Docker can hold a stale reservation that nothing on the host listens on, so the earlier bound-port probe
+     * cannot catch it. Only the site's own database port is changed, and only one retry is made per run.
+     */
+    private function recoverFromPortConflict(Site $site, string $content): bool
+    {
+        if ($this->portConflictHandled) {
+            return false;
+        }
+
+        $refused = CommandLogErrorDetector::conflictingPort($content);
+        if ($refused === null) {
+            return false;
+        }
+
+        try {
+            $newPort = app(SiteManager::class)->reassignDatabasePortAfterConflict($site, $refused);
+        } catch (\Throwable $e) {
+            Log::warning('WithCommandExecution::recoverFromPortConflict could not reassign the port', ['site' => $site->id, 'error' => $e->getMessage()]);
+
+            return false;
+        }
+
+        if ($newPort === null) {
+            return false;
+        }
+
+        Log::info('WithCommandExecution::recoverFromPortConflict reassigned the database port', ['site' => $site->id, 'from' => $refused, 'to' => $newPort]);
+
+        $this->portConflictHandled = true;
+        $this->rebuildThisStep = true;
+
+        CommandLog::where('site_id', $site->id)
+            ->where('step_number', $this->currentStep)
+            ->where('status', 'running')
+            ->update([
+                'status' => 'failed',
+                'error_output' => "Docker refused database port {$refused}. Using {$newPort} and rebuilding.",
+                'completed_at' => now(),
+            ]);
+
+        $this->executeNextStep($this->getStepDefinitions(), $site);
+
+        return true;
     }
 
     private function failCurrentStep(Site $site, string $errorMessage): void
