@@ -111,10 +111,36 @@ class WindowsDependencyInstallerTest extends TestCase
 
     public function test_docker_install_writes_the_installer_exit_code_to_the_install_log(): void
     {
-        $command = $this->windowsInstaller()->getInstallCommand('docker');
+        $command = $this->decodedDockerScript();
 
         $this->assertStringContainsString('-PassThru', $command);
         $this->assertStringContainsString('exit code $($p.ExitCode)', $command);
+    }
+
+    public function test_docker_install_runs_in_its_own_process_so_it_can_append_to_the_log(): void
+    {
+        $command = $this->windowsInstaller()->getInstallCommand('docker');
+
+        $this->assertStringStartsWith('Start-Process powershell.exe -Wait', $command);
+        $script = $this->decodedDockerScript();
+        $this->assertStringContainsString('Add-Content -LiteralPath $log', $script);
+        $this->assertStringNotContainsString('Write-Output', $script);
+    }
+
+    public function test_docker_install_starts_docker_desktop_and_waits_for_the_engine(): void
+    {
+        $script = $this->decodedDockerScript();
+
+        $this->assertStringContainsString('Docker Desktop.exe', $script);
+        $this->assertStringContainsString('& $docker info', $script);
+    }
+
+    private function decodedDockerScript(): string
+    {
+        $command = $this->windowsInstaller()->getInstallCommand('docker');
+        preg_match("/'-EncodedCommand','([^']+)'/", $command, $m);
+
+        return mb_convert_encoding(base64_decode($m[1]), 'UTF-8', 'UTF-16LE');
     }
 
     public function test_lando_install_patches_the_broken_arm64_check_and_uses_the_x64_cli(): void

@@ -180,7 +180,9 @@ class DependencyChecker
             && ! empty(glob($landoDir.DIRECTORY_SEPARATOR.'bin'.DIRECTORY_SEPARATOR.'docker-compose-*'));
 
         if ($setupOutputs) {
-            return true;
+            // On Windows the CA file alone is not enough: Windows asks the user to trust it, and a cancelled
+            // dialog leaves the file behind. HTTPS on *.lndo.site fails later, so the store has to hold it too.
+            return $this->isLandoCaTrusted();
         }
 
         $pluginDir = $this->getLandoPluginsDir();
@@ -189,6 +191,34 @@ class DependencyChecker
         }
 
         return is_dir($pluginDir.DIRECTORY_SEPARATOR.'@lando'.DIRECTORY_SEPARATOR.'wordpress');
+    }
+
+    /**
+     * Whether Windows trusts the Lando CA (true on other platforms, where lando setup handles it).
+     *
+     * Compares the SHA-1 thumbprint of ~/.lando/certs/LandoCA.crt with the user and machine root stores through
+     * certutil, which reads either store without admin rights. False when the file is missing or unreadable.
+     */
+    public function isLandoCaTrusted(): bool
+    {
+        if (! $this->platform->isWindows()) {
+            return true;
+        }
+
+        $pem = @file_get_contents($this->platform->homeDir().'\\.lando\\certs\\LandoCA.crt');
+        $thumbprint = $pem ? openssl_x509_fingerprint($pem, 'sha1') : false;
+        if (! is_string($thumbprint) || ! preg_match('/^[0-9a-f]{40}$/i', $thumbprint)) {
+            return false;
+        }
+
+        foreach (['-user ', ''] as $scope) {
+            exec("certutil {$scope}-store Root {$thumbprint} 2>nul", $output, $code);
+            if ($code === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

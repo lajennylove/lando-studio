@@ -53,21 +53,51 @@ class DependencyInstaller
             // --quiet          suppresses UI
             // --accept-license pre-accepts Docker Subscription Service Agreement
             // --backend=wsl-2  default backend; avoids Hyper-V prompt
-            'windows' => implode('; ', [
-                '$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }',
-                '$url = "https://desktop.docker.com/win/main/$arch/Docker%20Desktop%20Installer.exe"',
-                '$f = "$env:TEMP\DockerDesktopInstaller.exe"',
-                'Invoke-WebRequest -Uri $url -OutFile $f -UseBasicParsing',
-                // The exit code goes to the install log: the installer itself prints nothing with --quiet.
-                '$p = Start-Process $f -Wait -PassThru -ArgumentList @("install", "--quiet", "--accept-license", "--backend=wsl-2")',
-                'Write-Output "[Lando Studio] Docker Desktop installer finished with exit code $($p.ExitCode)"',
-            ]),
+            'windows' => $this->installDockerWindows(),
 
             // get.docker.com auto-detects the distro (apt, yum, dnf, zypper, etc.), but not Arch-based ones.
             default => $this->platform->isArchLinux()
                 ? $this->installDockerOnArch()
                 : 'curl -fsSL https://get.docker.com | sh',
         };
+    }
+
+    /**
+     * Builds the Windows Docker Desktop install as one command that runs the real script in its own hidden PowerShell.
+     *
+     * The caller redirects this command's output with *>, and that redirect holds the log file open, so the script
+     * cannot append to the log itself. Run in a separate process, it appends progress lines with Add-Content (as
+     * installWsl does) and they show live. The script is passed as -EncodedCommand, which needs no quoting.
+     * After the installer exits with 0 it starts Docker Desktop and waits for the engine, because a --quiet install
+     * never starts it and lando setup fails while the engine is down.
+     */
+    private function installDockerWindows(): string
+    {
+        $inner = implode('; ', [
+            "\$log = '".str_replace("'", "''", storage_path('logs/install_docker.log'))."'",
+            'function Log($message) { Add-Content -LiteralPath $log -Value $message }',
+            '$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }',
+            '$url = "https://desktop.docker.com/win/main/$arch/Docker%20Desktop%20Installer.exe"',
+            '$f = "$env:TEMP\DockerDesktopInstaller.exe"',
+            // Invoke-WebRequest -OutFile in Windows PowerShell writes the file only after the whole download, so the
+            // log stayed silent for minutes. WebClient streams to the file, and the loop reports progress every 5 s.
+            '$total = [Math]::Max(1, [int64](@((Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing).Headers["Content-Length"])[0]))',
+            '$wc = New-Object System.Net.WebClient',
+            '$task = $wc.DownloadFileTaskAsync($url, $f)',
+            'while (-not $task.IsCompleted) { Start-Sleep -Seconds 5; $got = if (Test-Path $f) { (Get-Item $f).Length } else { 0 }; Log ("[Lando Studio] Downloading Docker Desktop: {0:N0} of {1:N0} MB ({2}%)" -f ($got / 1MB), ($total / 1MB), [int](100 * $got / $total)) }',
+            'if ($task.IsFaulted) { throw $task.Exception.InnerException }',
+            'Log "[Lando Studio] Download finished. Installing Docker Desktop, this takes several minutes."',
+            // The installer prints nothing with --quiet, so the loop prints a line every 15 s to keep the log moving.
+            '$p = Start-Process $f -PassThru -ArgumentList @("install", "--quiet", "--accept-license", "--backend=wsl-2")',
+            '$started = Get-Date; while (-not $p.WaitForExit(15000)) { Log ("[Lando Studio] Installing Docker Desktop... {0} min elapsed" -f [int]((Get-Date) - $started).TotalMinutes) }',
+            'Log "[Lando Studio] Docker Desktop installer finished with exit code $($p.ExitCode)"',
+            '$docker = "$env:ProgramFiles\Docker\Docker\resources\bin\docker.exe"',
+            'if ($p.ExitCode -eq 0) { Log "[Lando Studio] Starting Docker Desktop..."; Start-Process "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"; $t = Get-Date; $up = $false; while (-not $up -and ((Get-Date) - $t).TotalMinutes -lt 4) { Start-Sleep -Seconds 10; & $docker info *> $null; $up = ($LASTEXITCODE -eq 0); if (-not $up) { Log ("[Lando Studio] Waiting for the Docker engine... {0} s" -f [int]((Get-Date) - $t).TotalSeconds) } }; if ($up) { Log "[Lando Studio] Docker engine is running." } else { Log "[Lando Studio] Docker Desktop is installed but its engine is not running yet. Accept any Docker Desktop prompt, then run the Lando Plugins step." } }',
+        ]);
+
+        $encoded = base64_encode(mb_convert_encoding($inner, 'UTF-16LE', 'UTF-8'));
+
+        return "Start-Process powershell.exe -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','{$encoded}'";
     }
 
     /**

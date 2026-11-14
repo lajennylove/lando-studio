@@ -31,8 +31,11 @@ if (-not $nodeDir) {
     Write-Host "[native-dev] WARNING: Using Node $ver -- Vite requires Node.js 20.19+ or 22.12+" -ForegroundColor Yellow
 }
 
+# nvm-windows' shim folder has npm.exe and npx.exe instead of the .cmd files the Node installer ships.
 $npxCmd = Join-Path $nodeDir "npx.cmd"
+if (-not (Test-Path $npxCmd)) { $npxCmd = Join-Path $nodeDir "npx.exe" }
 $npmCmd = Join-Path $nodeDir "npm.cmd"
+if (-not (Test-Path $npmCmd)) { $npmCmd = Join-Path $nodeDir "npm.exe" }
 
 Write-Host "[native-dev] Using node: $nodeDir ($((& (Join-Path $nodeDir 'node.exe') --version)))" -ForegroundColor DarkGray
 
@@ -92,7 +95,7 @@ if (-not (Test-Path (Join-Path $electronJs "node_modules\electron"))) {
 }
 
 # Prepend the chosen Node directory so all child processes (npm, vite) use the right version
-$env:PATH = "$nodeDir;" + $env:PATH
+$env:PATH = "$nodeDir;$(Split-Path $phpCmd);" + $env:PATH
 
 # Start NativePHP + Vite
 $root = Join-Path $PSScriptRoot ".."

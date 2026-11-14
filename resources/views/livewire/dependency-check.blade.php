@@ -1,4 +1,6 @@
-<div @if($installing) wire:poll.3s="pollInstallStatus" @endif>
+{{-- Always polls, so a finished install turns green without a manual refresh. keep-alive: Livewire otherwise slows polling
+     in a background window, and the Docker and WSL installers put their own windows in front of this one. --}}
+<div @if($installing) wire:poll.keep-alive.3s="pollInstallStatus" @else wire:poll.keep-alive.5s="pollInstallStatus" @endif>
     <div class="grid lg:grid-cols-2 gap-6 h-full">
 
         {{-- Left column: dependency list --}}

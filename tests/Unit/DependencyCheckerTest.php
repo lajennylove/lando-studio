@@ -81,6 +81,29 @@ class DependencyCheckerTest extends TestCase
         $this->assertFalse($checker->allRequiredInstalled());
     }
 
+    public function test_lando_setup_is_complete_only_when_the_ca_is_trusted(): void
+    {
+        file_put_contents($this->home.'/.lando/certs/LandoCA.crt', 'cert');
+        file_put_contents($this->home.'/.lando/bin/docker-compose-v2.40.3.exe', 'compose');
+
+        $platform = Mockery::mock(PlatformDetector::class);
+        $platform->shouldReceive('isWindows')->andReturn(false);
+        $platform->shouldReceive('homeDir')->andReturn($this->home);
+
+        $untrusted = Mockery::mock(DependencyChecker::class, [$platform])->makePartial();
+        $untrusted->shouldReceive('isLandoCaTrusted')->andReturn(false);
+        $this->assertFalse($untrusted->isLandoSetupComplete());
+
+        $trusted = Mockery::mock(DependencyChecker::class, [$platform])->makePartial();
+        $trusted->shouldReceive('isLandoCaTrusted')->andReturn(true);
+        $this->assertTrue($trusted->isLandoSetupComplete());
+    }
+
+    public function test_ca_trust_is_not_checked_outside_windows(): void
+    {
+        $this->assertTrue($this->checkerWithHome()->isLandoCaTrusted());
+    }
+
     public function test_lando_setup_is_not_complete_when_only_the_ca_exists(): void
     {
         file_put_contents($this->home.'/.lando/certs/LandoCA.crt', 'cert');

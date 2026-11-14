@@ -6,6 +6,7 @@ use App\Livewire\Concerns\WithNotifications;
 use App\Services\DependencyChecker;
 use App\Services\DependencyInstaller;
 use App\Services\PlatformDetector;
+use App\Support\CommandLogErrorDetector;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -88,8 +89,12 @@ class DependencyCheck extends Component
         $this->dependencies['lando-plugins'] = [
             'installed' => $checker->isLandoSetupComplete(),
             'version' => null,
-            'label' => 'Lando Plugins',
-            'description' => 'WordPress recipe and common plugins (run lando setup)',
+            // Lando 3.26.9 bundles its plugins (the WordPress recipe included) in the executable, so on that release
+            // this step installs Docker Compose and creates the Lando certificate and network ("installed 0 of 0 plugins").
+            // lando setup also installs any plugin a later release stops bundling, so the step stays required.
+            'label' => 'Lando Setup',
+            'description' => 'Docker Compose, certificate, network and any Lando plugins not bundled (runs lando setup).'
+                .($platform->isWindows() ? ' Windows asks you to trust the Lando certificate: click Yes.' : ''),
             'required' => true,
             'install_action' => 'runLandoSetup',
         ];
@@ -133,7 +138,12 @@ class DependencyCheck extends Component
         if ($platform->isWindows()) {
             // Spread all PS args; the log redirect is PowerShell-native syntax.
             $shellArgs = $platform->powershellArgs();
-            $cmd = [...$shellArgs, "{$command} *> '".addslashes($this->installLogFile)."'"];
+            // WSL2 and Docker run their script in a separate process that appends to the install log itself. A *>
+            // redirect onto that same file empties it and holds it open, so the script's lines were lost and the log
+            // stayed at 0 bytes. Their own output goes to a side file instead.
+            $selfLogging = in_array($dependency, ['wsl', 'docker'], true);
+            $redirectTarget = addslashes($this->installLogFile).($selfLogging ? '.out' : '');
+            $cmd = [...$shellArgs, "{$command} *> '{$redirectTarget}'"];
         } else {
             $cmd = [$platform->shellWrapper(), $platform->shellFlag(), "{$command} > ".escapeshellarg($this->installLogFile).' 2>&1'];
         }
@@ -153,6 +163,13 @@ class DependencyCheck extends Component
     public function pollInstallStatus(): void
     {
         if (! $this->installing) {
+            // Nothing is running from this page, but a dependency can still change underneath it (an install that
+            // outlived the page, a restart, a manual install). Re-check until everything is met, so the list
+            // never shows stale state.
+            if (! $this->allRequiredMet()) {
+                $this->checkDependencies();
+            }
+
             return;
         }
 
@@ -169,12 +186,24 @@ class DependencyCheck extends Component
         // lando setup: detect completion via log marker OR dependency check
         if ($this->installingDep === 'lando-setup') {
             $dep = $this->dependencies['lando-plugins'] ?? null;
-            if (($dep && $dep['installed']) || str_contains($this->installOutput, '[Lando Studio] lando setup finished')) {
+            // lando setup exits 0 even when it fails, and the finish line is written either way, so the error text
+            // decides: a finished run with an error is a failure, not success.
+            $finished = str_contains($this->installOutput, '[Lando Studio] lando setup finished');
+            if ($finished && CommandLogErrorDetector::indicatesFailure($this->installOutput)) {
                 $this->installing = false;
                 $this->installingDep = '';
                 $this->installLogFile = '';
                 $this->dispatch('lando-studio-scroll-terminal');
-                $this->notifySuccess('Lando plugins installed successfully!');
+                $this->notifyError('Lando setup failed. The log shows the error.');
+
+                return;
+            }
+            if (($dep && $dep['installed']) || $finished) {
+                $this->installing = false;
+                $this->installingDep = '';
+                $this->installLogFile = '';
+                $this->dispatch('lando-studio-scroll-terminal');
+                $this->notifySuccess('Lando setup finished successfully!');
             }
 
             return;
