@@ -121,6 +121,8 @@
                 <flux:text>
                     @if($connectionFailurePhase === 'ssh')
                         SSH could not connect to the server. The saved password may be wrong, or the server may be unreachable.
+                    @elseif($connectionFailurePhase === 'repository')
+                        The theme repository could not be read. @if($repositoryNeedsLogin) Enter the username and password for this repository host. They are saved (encrypted) once they work. @else Check the VPN and the repository URL. @endif
                     @else
                         SSH connected, but MySQL rejected the database user or password. Use the credentials from production <code class="text-xs">wp-config.php</code> (often different from SSH credentials).
                     @endif
@@ -130,6 +132,22 @@
                 @endif
             </flux:callout>
 
+            @if($connectionFailurePhase === 'repository')
+                @if($repositoryNeedsLogin)
+                    <div class="space-y-4 max-w-xl">
+                        <flux:field>
+                            <flux:label>Repository Username</flux:label>
+                            <flux:input wire:model="repositoryUsername" autocomplete="off" />
+                        </flux:field>
+
+                        <flux:field>
+                            <flux:label>Repository Password or Token</flux:label>
+                            <flux:input type="password" viewable wire:model="repositoryPassword" autocomplete="new-password" />
+                            <flux:description>Stored encrypted for this repository's host</flux:description>
+                        </flux:field>
+                    </div>
+                @endif
+            @else
             <div class="space-y-4 max-w-xl">
                 <flux:field>
                     <flux:label>SSH Password</flux:label>
@@ -143,6 +161,7 @@
                     <flux:description>The MySQL password (usually different from SSH)</flux:description>
                 </flux:field>
             </div>
+            @endif
 
             <flux:callout variant="info" icon="information-circle" class="max-w-2xl">
                 <flux:text>
