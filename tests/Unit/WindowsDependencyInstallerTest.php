@@ -7,8 +7,10 @@ namespace Tests\Unit;
 use App\Services\DependencyInstaller;
 use App\Services\PlatformDetector;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Tests\TestCase;
 
+#[RequiresOperatingSystemFamily('Windows')]
 class WindowsDependencyInstallerTest extends TestCase
 {
     protected function tearDown(): void
@@ -27,6 +29,7 @@ class WindowsDependencyInstallerTest extends TestCase
         return new DependencyInstaller($platform);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_wsl_install_enables_both_windows_features_and_the_wsl_package(): void
     {
         $command = $this->wslScript();
@@ -45,6 +48,7 @@ class WindowsDependencyInstallerTest extends TestCase
         return mb_convert_encoding(base64_decode($m[1]), 'UTF-8', 'UTF-16LE');
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_wsl_install_runs_elevated_so_windows_shows_its_uac_prompt(): void
     {
         $command = $this->windowsInstaller()->getInstallCommand('wsl');

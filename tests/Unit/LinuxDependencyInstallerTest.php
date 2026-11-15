@@ -7,6 +7,7 @@ namespace Tests\Unit;
 use App\Services\DependencyInstaller;
 use App\Services\PlatformDetector;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use PHPUnit\Framework\TestCase;
 
 class LinuxDependencyInstallerTest extends TestCase
@@ -35,6 +36,7 @@ class LinuxDependencyInstallerTest extends TestCase
         $this->assertSame('pkexec pacman -S --noconfirm --needed sshpass', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_sshpass_on_other_linux_tries_the_common_package_managers(): void
     {
         $command = $this->linuxInstaller(arch: false)->getInstallCommand('sshpass');
@@ -44,6 +46,7 @@ class LinuxDependencyInstallerTest extends TestCase
         $this->assertStringContainsString('dnf install -y sshpass', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Darwin')]
     public function test_sshpass_on_macos_installs_from_the_homebrew_tap(): void
     {
         $platform = Mockery::mock(PlatformDetector::class);
@@ -54,6 +57,7 @@ class LinuxDependencyInstallerTest extends TestCase
         $this->assertStringContainsString('brew install hudochenkov/sshpass/sshpass', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_lando_ca_on_linux_runs_lando_script_through_pkexec(): void
     {
         $command = $this->linuxInstaller(arch: false)->installLandoCaLinux();
@@ -89,6 +93,7 @@ class LinuxDependencyInstallerTest extends TestCase
         $this->assertStringEndsWith('; }', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_docker_on_other_linux_keeps_the_docker_install_script(): void
     {
         $command = $this->linuxInstaller(arch: false)->getInstallCommand('docker');

@@ -10,6 +10,7 @@ use App\Services\RemoteConnectionVerifier;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Process;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Tests\TestCase;
 
 class RemoteConnectionVerifierTest extends TestCase
@@ -123,6 +124,7 @@ class RemoteConnectionVerifierTest extends TestCase
         $this->assertFalse(RemoteConnectionVerifier::isAccessDenied($dump));
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_windows_ssh_command_reads_the_password_from_the_environment_not_the_command_line(): void
     {
         $password = "pa!ss%w^rd&'x";

@@ -8,6 +8,7 @@ use App\Services\LandoYamlGenerator;
 use App\Services\OptimizedMode;
 use App\Services\PlatformDetector;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Symfony\Component\Yaml\Yaml;
 use Tests\TestCase;
 
@@ -44,6 +45,7 @@ class LandoYamlGeneratorVolumesTest extends TestCase
         $this->app->instance(OptimizedMode::class, $mode);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_windows_without_optimized_mode_gets_no_volumes(): void
     {
         $this->onWindows(true, false);
@@ -61,6 +63,7 @@ class LandoYamlGeneratorVolumesTest extends TestCase
         return Yaml::parse($yaml);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_windows_puts_core_and_plugins_on_volumes(): void
     {
         $this->onWindows(true);

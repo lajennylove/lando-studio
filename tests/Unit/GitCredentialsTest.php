@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Support\GitCredentials;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Tests\TestCase;
 
 class GitCredentialsTest extends TestCase
@@ -25,6 +26,7 @@ class GitCredentialsTest extends TestCase
         parent::tearDown();
     }
 
+    #[RequiresOperatingSystemFamily('!Windows')]
     public function test_the_file_holds_username_then_password_with_private_permissions(): void
     {
         GitCredentials::write($this->file, 'jenny', 'pa55 word');
@@ -51,6 +53,7 @@ class GitCredentialsTest extends TestCase
         $this->assertStringNotContainsString('secret-value-123', $prefix);
     }
 
+    #[RequiresOperatingSystemFamily('!Windows')]
     public function test_the_askpass_script_answers_from_the_file_and_is_private(): void
     {
         $script = GitCredentials::askpassPath();

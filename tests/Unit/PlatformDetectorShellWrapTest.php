@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Services\PlatformDetector;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Tests\TestCase;
 
 class PlatformDetectorShellWrapTest extends TestCase
@@ -27,6 +28,7 @@ class PlatformDetectorShellWrapTest extends TestCase
         $this->assertStringContainsString("'Machine') + ';' + ", $prefix);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_windows_wrapper_writes_a_heartbeat_to_a_side_file_while_the_command_runs(): void
     {
         $windows = new class extends PlatformDetector

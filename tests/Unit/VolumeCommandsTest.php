@@ -10,6 +10,7 @@ use App\Services\LandoService;
 use App\Services\PlatformDetector;
 use App\Services\SshService;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Tests\TestCase;
 
 class VolumeCommandsTest extends TestCase
@@ -34,6 +35,7 @@ class VolumeCommandsTest extends TestCase
         return $remote;
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_the_windows_plugin_sync_runs_in_the_container_when_the_plugins_are_a_volume(): void
     {
         $this->windows();
@@ -44,6 +46,7 @@ class VolumeCommandsTest extends TestCase
         $this->assertStringContainsString('--container=shop_appserver_1', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_the_windows_plugin_sync_stays_on_pscp_without_volumes(): void
     {
         $this->windows();

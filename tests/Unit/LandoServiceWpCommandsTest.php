@@ -9,6 +9,7 @@ use App\Services\LandoService;
 use App\Services\PlatformDetector;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use PHPUnit\Framework\TestCase;
 
 class LandoServiceWpCommandsTest extends TestCase
@@ -72,6 +73,7 @@ class LandoServiceWpCommandsTest extends TestCase
         $this->assertStringContainsString('Composer install in progress', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_composer_install_on_windows_is_left_to_the_step_wrapper_heartbeat(): void
     {
         $command = $this->landoService(true)->composerInstall('C:\\sites\\betus', 'wp/wp-content/themes/locker-room');

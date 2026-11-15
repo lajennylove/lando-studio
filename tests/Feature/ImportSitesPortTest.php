@@ -77,7 +77,7 @@ class ImportSitesPortTest extends TestCase
         $this->assertSame(40_100, Site::where('name', 'sportsanddata')->value('db_port'));
 
         $this->assertCount(1, $this->startedProcesses());
-        $this->assertStringContainsString('rebuild '.$this->codePath.'/sportsanddata', implode(' ', (array) $this->startedProcesses()[0]['cmd']));
+        $this->assertStringContainsString('rebuild '.$this->codePath.DIRECTORY_SEPARATOR.'sportsanddata', implode(' ', (array) $this->startedProcesses()[0]['cmd']));
     }
 
     public function test_import_leaves_a_site_alone_when_its_port_is_unique(): void
