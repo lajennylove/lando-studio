@@ -6,16 +6,29 @@ namespace App\Livewire\Concerns;
 
 use App\Enums\SiteStatus;
 use App\Models\CommandLog;
+use App\Models\RepositoryCredential;
 use App\Models\Site;
+use App\Services\LandoService;
 use App\Services\PlatformDetector;
+use App\Services\SiteManager;
 use App\Support\CommandLogErrorDetector;
+use App\Support\GitCredentials;
 use App\Support\LogContentUtf8;
+use App\Support\RefusedDatabasePorts;
+use App\Support\StepLogActivity;
+use Illuminate\Support\Facades\Log;
 use Native\Laravel\Facades\ChildProcess;
 
 trait WithCommandExecution
 {
     /** Keep snapshot size bounded; full logs remain in storage/logs. */
     private const LIVEWIRE_OUTPUT_CAP_BYTES = 100_000;
+
+    /** How many times one run may move the database port after Docker refuses it. */
+    private const MAX_PORT_RETRIES = 5;
+
+    /** Longest a single step may run while it still shows signs of life, before it is treated as hung. */
+    private const MAX_STEP_SECONDS = 21_600;
 
     public int $currentStep = 0;
 
@@ -33,6 +46,12 @@ trait WithCommandExecution
 
     public ?float $executionStartedAt = null;
 
+    /** Database ports Docker refused in this run; each repair skips all of them. A stale block can span several ports. */
+    public array $refusedPorts = [];
+
+    /** The next step runs as `lando rebuild -y` because the database port changed. */
+    public bool $rebuildThisStep = false;
+
     public function executeStepSequence(array $stepDefinitions, Site $site): void
     {
         $this->isExecuting = true;
@@ -46,7 +65,7 @@ trait WithCommandExecution
             'label' => $s['label'],
             'hint' => $s['hint'] ?? null,
             'group' => $s['group'] ?? null,
-            'timeout' => $s['timeout'] ?? 600,
+            'inactivity_timeout' => $s['inactivity_timeout'] ?? 30,
             'status' => 'pending',
             'output' => '',
         ], $stepDefinitions);
@@ -77,7 +96,38 @@ trait WithCommandExecution
             mkdir($logDir, 0755, true);
         }
 
-        $command = $step['command'];
+        // Steps that need a saved repository login get it through a private file, never through the command text.
+        if (! empty($step['git_credentials_host'])) {
+            try {
+                $credential = RepositoryCredential::where('host', $step['git_credentials_host'])->first();
+                if (! $credential) {
+                    $this->failCurrentStep($site, "No saved login for {$step['git_credentials_host']}.");
+
+                    return;
+                }
+                GitCredentials::write(GitCredentials::fileFor('site-'.$site->id), $credential->username, $credential->password);
+            } catch (\Throwable $e) {
+                $this->failCurrentStep($site, 'Could not prepare the repository login: '.$e->getMessage());
+
+                return;
+            }
+        }
+
+        if ($this->rebuildThisStep) {
+            // After a database port change the containers must be recreated, so the start step becomes a rebuild.
+            $this->rebuildThisStep = false;
+            $command = app(LandoService::class)->rebuild($site->path);
+        } else {
+            // Same rule as the Start button: never start on a database port something already listens on.
+            if (($step['label'] ?? '') === 'Starting Lando environment') {
+                try {
+                    app(SiteManager::class)->ensurePortAvailable($site);
+                } catch (\Throwable $e) {
+                    Log::warning('WithCommandExecution::executeNextStep port check failed', ['site' => $site->id, 'error' => $e->getMessage()]);
+                }
+            }
+            $command = $step['command'];
+        }
         $alias = 'lando-site-'.$site->id.'-step-'.$this->currentStep.'-'.uniqid();
 
         CommandLog::create([
@@ -143,52 +193,126 @@ trait WithCommandExecution
             return;
         }
 
-        $content = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
+        $rawContent = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
+        $marker = PlatformDetector::STEP_DONE_MARKER;
+        $hasMarker = str_contains($rawContent, $marker);
+
+        // Strip the internal marker from user-facing output.
+        $content = str_replace($marker, '', $rawContent);
         $this->terminalOutput = $this->capLivewireOutput($this->completedOutput.$content);
         $this->dispatch('lando-studio-scroll-terminal');
         $this->steps[$this->currentStep]['output'] = $this->tailLines($content, 10);
 
-        // Overall timeout for a single step; default 10 min, but dump steps may override higher.
-        $stepTimeout = $this->steps[$this->currentStep]['timeout'] ?? 600;
-        if ($elapsed > $stepTimeout) {
-            $timeoutMinutes = (int) round($stepTimeout / 60);
-            $this->failCurrentStep($site, "Command timed out after {$timeoutMinutes} minutes.");
+        // ── 1. Completion marker present — process definitely exited ────────
+        // Check this BEFORE the wall-clock timeout so a step that finishes at
+        // 29:59 isn't falsely killed when the next poll happens at 30:01.
+        if ($hasMarker) {
+            $this->completeCurrentStep($site, $content);
 
             return;
         }
 
-        // Wait 30 seconds of inactivity before considering the step complete.
+        // ── 2. Backstop — a step that is still alive is never cut off for being slow ──
+        // A large database or a big theme build can run for an hour on Windows. Liveness is judged by the log and
+        // heartbeat activity below, so this only catches a process that is hung while still looking alive.
+        if ($elapsed > self::MAX_STEP_SECONDS) {
+            $this->failCurrentStep($site, 'Command ran for over '.(self::MAX_STEP_SECONDS / 3600).' hours without finishing. Check the step log, then retry.');
+
+            return;
+        }
+
+        // ── 3. Inactivity fallback — marker not written (crash/kill) ────────
         // Lando commands have long pauses during builds (apt-get, node install,
         // healthchecks, "Continuing in 10 seconds..." warnings).
-        $lastModified = filemtime($logFile);
-        if ((time() - $lastModified) > 30) {
-            $hasError = CommandLogErrorDetector::indicatesFailure($content);
+        $inactivityTimeout = $this->steps[$this->currentStep]['inactivity_timeout'] ?? 30;
+        $lastModified = StepLogActivity::lastActivity($logFile);
+        if ((time() - $lastModified) > $inactivityTimeout) {
+            $this->completeCurrentStep($site, $content);
+        }
+    }
 
-            if ($hasError) {
-                $this->failCurrentStep($site, $this->tailLines($content, 50));
+    private function completeCurrentStep(Site $site, string $content): void
+    {
+        $hasError = CommandLogErrorDetector::indicatesFailure($content);
 
+        if ($hasError) {
+            if ($this->recoverFromPortConflict($site, $content)) {
                 return;
             }
 
-            $this->steps[$this->currentStep]['status'] = 'completed';
+            $this->failCurrentStep($site, $this->tailLines($content, 50));
 
-            // Accumulate this step's output for the full log
-            $stepLabel = $this->steps[$this->currentStep]['label'] ?? '';
-            $this->completedOutput .= "\n--- [{$stepLabel}] ---\n".$content."\n";
-            $this->completedOutput = $this->capLivewireOutput($this->completedOutput);
-
-            CommandLog::where('site_id', $site->id)
-                ->where('step_number', $this->currentStep)
-                ->where('status', 'running')
-                ->update([
-                    'status' => 'completed',
-                    'output' => $this->tailLines($content, 100),
-                    'completed_at' => now(),
-                ]);
-
-            $this->currentStep++;
-            $this->executeNextStep($this->getStepDefinitions(), $site);
+            return;
         }
+
+        $this->steps[$this->currentStep]['status'] = 'completed';
+
+        // Accumulate this step's output for the full log
+        $stepLabel = $this->steps[$this->currentStep]['label'] ?? '';
+        $this->completedOutput .= "\n--- [{$stepLabel}] ---\n".$content."\n";
+        $this->completedOutput = $this->capLivewireOutput($this->completedOutput);
+
+        CommandLog::where('site_id', $site->id)
+            ->where('step_number', $this->currentStep)
+            ->where('status', 'running')
+            ->update([
+                'status' => 'completed',
+                'output' => $this->tailLines($content, 100),
+                'completed_at' => now(),
+            ]);
+
+        $this->currentStep++;
+        $this->executeNextStep($this->getStepDefinitions(), $site);
+    }
+
+    /**
+     * When Docker refuses the site's database port ("port is already allocated"), moves the site to a free port
+     * and runs the failed step again as `lando rebuild -y`. Returns true when the step was restarted.
+     * Docker can hold a stale reservation that nothing on the host listens on, so the earlier bound-port probe
+     * cannot catch it, and stale reservations often come in blocks. Only the site's own database port is changed,
+     * every refused port is remembered, and at most MAX_PORT_RETRIES repairs are made per run.
+     */
+    private function recoverFromPortConflict(Site $site, string $content): bool
+    {
+        if (count($this->refusedPorts) >= self::MAX_PORT_RETRIES) {
+            return false;
+        }
+
+        $refused = CommandLogErrorDetector::conflictingPort($content);
+        if ($refused === null) {
+            return false;
+        }
+
+        try {
+            $newPort = app(SiteManager::class)->reassignDatabasePortAfterConflict($site, $refused, $this->refusedPorts);
+        } catch (\Throwable $e) {
+            Log::warning('WithCommandExecution::recoverFromPortConflict could not reassign the port', ['site' => $site->id, 'error' => $e->getMessage()]);
+
+            return false;
+        }
+
+        if ($newPort === null) {
+            return false;
+        }
+
+        Log::info('WithCommandExecution::recoverFromPortConflict reassigned the database port', ['site' => $site->id, 'from' => $refused, 'to' => $newPort]);
+
+        $this->refusedPorts[] = $refused;
+        app(RefusedDatabasePorts::class)->add($refused);
+        $this->rebuildThisStep = true;
+
+        CommandLog::where('site_id', $site->id)
+            ->where('step_number', $this->currentStep)
+            ->where('status', 'running')
+            ->update([
+                'status' => 'failed',
+                'error_output' => "Docker refused database port {$refused}. Using {$newPort} and rebuilding.",
+                'completed_at' => now(),
+            ]);
+
+        $this->executeNextStep($this->getStepDefinitions(), $site);
+
+        return true;
     }
 
     private function failCurrentStep(Site $site, string $errorMessage): void

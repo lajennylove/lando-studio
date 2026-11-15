@@ -41,6 +41,8 @@ class Settings extends Component
 
     public string $defaultCodePath = '';
 
+    public string $caCertPath = '';
+
     // Lando update
     public bool $landoUpdating = false;
 
@@ -114,6 +116,7 @@ class Settings extends Component
         $this->defaultDbVersion = $defaults['db_version'] ?? config('lando_dev.defaults.db_version');
         $this->defaultRedisVersion = $defaults['redis_version'] ?? config('lando_dev.defaults.redis_version');
         $this->defaultCodePath = $defaults['code_path'] ?? config('lando_dev.defaults.code_path') ?? '~/code/sites/';
+        $this->caCertPath = $defaults['ca_cert_path'] ?? '';
     }
 
     public function setAppearance(string $value): void
@@ -161,6 +164,26 @@ class Settings extends Component
         $this->notifySuccess('Default code path updated.');
     }
 
+    public function saveCaCertPath(): void
+    {
+        $path = trim($this->caCertPath);
+
+        if ($path !== '' && ! file_exists($path)) {
+            $this->addError('caCertPath', 'Certificate file not found at that path.');
+
+            return;
+        }
+
+        $this->caCertPath = $path;
+        $this->persistDefaults();
+
+        if ($path === '') {
+            $this->notifySuccess('CA certificate cleared.');
+        } else {
+            $this->notifySuccess('CA certificate path saved.');
+        }
+    }
+
     private function persistDefaults(): void
     {
         $path = storage_path('lando_studio_defaults.json');
@@ -169,6 +192,7 @@ class Settings extends Component
             'db_version' => $this->defaultDbVersion,
             'redis_version' => $this->defaultRedisVersion,
             'code_path' => $this->defaultCodePath,
+            'ca_cert_path' => $this->caCertPath,
         ], JSON_PRETTY_PRINT));
     }
 
@@ -376,7 +400,7 @@ class Settings extends Component
 
         if ($platform->isWindows()) {
             $log = addslashes($this->landoUpdateLogFile);
-            $cmd = [...$platform->powershellArgs(), "& \"{$lando}\" update -y *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
+            $cmd = [...$platform->powershellArgs(), $platform->powershellStepPrefix()."& \"{$lando}\" update -y *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
         } else {
             $logArg = escapeshellarg($this->landoUpdateLogFile);
             $markerArg = escapeshellarg($marker);

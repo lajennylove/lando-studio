@@ -6,9 +6,11 @@ use App\Enums\SiteStatus;
 use App\Livewire\Concerns\WithCommandExecution;
 use App\Livewire\Concerns\WithNotifications;
 use App\Models\RemoteSite;
+use App\Models\RepositoryCredential;
 use App\Models\Site;
 use App\Services\PlatformDetector;
 use App\Services\RemoteConnectionVerifier;
+use App\Services\RepositoryAccess;
 use App\Services\SiteManager;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -29,6 +31,8 @@ class CloneSite extends Component
     public string $siteName = '';
 
     public string $path = '';
+
+    public string $themeBranch = SiteManager::THEME_BRANCH;
 
     // Progress
     public bool $showProgress = false;
@@ -52,6 +56,14 @@ class CloneSite extends Component
     public string $connectionFixSshPassword = '';
 
     public string $connectionFixDbPassword = '';
+
+    /** Repository login typed in the pre-flight panel when the theme repo asks for one. Saved for the host on success. */
+    public string $repositoryUsername = '';
+
+    public string $repositoryPassword = '';
+
+    /** True when the repository asked for a login (the panel then shows the username and password fields). */
+    public bool $repositoryNeedsLogin = false;
 
     // Remote sites for dropdown
     public function getRemoteSitesProperty()
@@ -84,6 +96,40 @@ class CloneSite extends Component
         $this->path = app(PlatformDetector::class)->defaultCodePath().DIRECTORY_SEPARATOR.$slug;
     }
 
+    /**
+     * Checks that the theme repository can be read. Uses the login typed in the panel when both fields are filled,
+     * otherwise the login saved for the repository's host. A typed login that works is saved for that host.
+     *
+     * @return array{message: string, needsLogin: bool}|null null when the repository is reachable
+     */
+    private function checkRepository(RemoteSite $remoteSite): ?array
+    {
+        $access = app(RepositoryAccess::class);
+        $host = $access->hostFor((string) $remoteSite->repo_url);
+        $typed = filled($this->repositoryUsername) && filled($this->repositoryPassword);
+        $saved = $host ? RepositoryCredential::where('host', $host)->first() : null;
+
+        $username = $typed ? $this->repositoryUsername : $saved?->username;
+        $password = $typed ? $this->repositoryPassword : $saved?->password;
+
+        $result = $access->probe((string) $remoteSite->repo_url, $username, $password);
+
+        if (! $result['ok']) {
+            Log::warning('CloneSite::checkRepository failed', ['host' => $host, 'needs_login' => $result['needsLogin']]);
+
+            return ['message' => $result['message'], 'needsLogin' => $result['needsLogin']];
+        }
+
+        if ($typed && $host) {
+            RepositoryCredential::updateOrCreate(
+                ['host' => $host],
+                ['username' => $this->repositoryUsername, 'password' => $this->repositoryPassword],
+            );
+        }
+
+        return null;
+    }
+
     private function resetConnectionState(): void
     {
         $this->connectionCheckInProgress = false;
@@ -93,6 +139,9 @@ class CloneSite extends Component
         $this->connectionAttemptCount = 0;
         $this->connectionFixSshPassword = '';
         $this->connectionFixDbPassword = '';
+        $this->repositoryUsername = '';
+        $this->repositoryPassword = '';
+        $this->repositoryNeedsLogin = false;
     }
 
     public function startClone(): void
@@ -105,6 +154,11 @@ class CloneSite extends Component
         $this->validate([
             'remoteSiteId' => 'required|exists:remote_sites,id',
             'siteName' => ['required', 'min:2', 'regex:/^[a-zA-Z0-9\s\-]+$/'],
+            'themeBranch' => ['required', 'string', 'max:100', function (string $attribute, mixed $value, \Closure $fail) {
+                if (! SiteManager::isValidBranchName((string) $value)) {
+                    $fail('Use letters, numbers, dots, dashes, underscores and slashes only.');
+                }
+            }],
         ]);
 
         $slug = Str::slug($this->siteName);
@@ -228,6 +282,20 @@ class CloneSite extends Component
             return;
         }
 
+        if ($remoteSite->repo_url) {
+            $repositoryCheck = $this->checkRepository($remoteSite);
+            if ($repositoryCheck !== null) {
+                $this->connectionCheckInProgress = false;
+                $this->connectionCheckFailed = true;
+                $this->connectionFailurePhase = 'repository';
+                $this->connectionFailureMessage = $repositoryCheck['message'];
+                $this->repositoryNeedsLogin = $repositoryCheck['needsLogin'];
+                $this->notifyWarning($repositoryCheck['message'].' Update the fields below and retry.');
+
+                return;
+            }
+        }
+
         Log::info('CloneSite::runConnectionCheck passed');
 
         // Success: save any override credentials encrypted
@@ -246,6 +314,9 @@ class CloneSite extends Component
         $this->connectionCheckFailed = false;
         $this->connectionFixSshPassword = '';
         $this->connectionFixDbPassword = '';
+        $this->repositoryUsername = '';
+        $this->repositoryPassword = '';
+        $this->repositoryNeedsLogin = false;
 
         if ($canStartCloneOnSuccess) {
             Log::info('CloneSite::runConnectionCheck proceeding with clone');
@@ -263,7 +334,7 @@ class CloneSite extends Component
         $this->cachedSteps = null;
 
         $manager = app(SiteManager::class);
-        $site = $manager->cloneSite($remoteSite, $slug, $this->path);
+        $site = $manager->cloneSite($remoteSite, $slug, $this->path, $this->themeBranch);
 
         $this->siteId = $site->id;
         $this->showProgress = true;

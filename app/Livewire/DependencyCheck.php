@@ -6,6 +6,7 @@ use App\Livewire\Concerns\WithNotifications;
 use App\Services\DependencyChecker;
 use App\Services\DependencyInstaller;
 use App\Services\PlatformDetector;
+use App\Support\CommandLogErrorDetector;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -37,21 +38,65 @@ class DependencyCheck extends Component
         $checker = app(DependencyChecker::class);
         $platform = app(PlatformDetector::class);
 
-        $this->dependencies = [
-            'lando' => [
-                'installed' => $checker->isLandoInstalled(),
-                'version' => $checker->getLandoVersion(),
-                'label' => 'Lando',
-                'description' => 'Container-based local development environment',
+        $this->dependencies = [];
+
+        // Windows order: WSL2 and PuTTY first, then Docker, then Lando. lando setup needs Docker,
+        // so the app installs Docker itself (with the right architecture) before Lando runs.
+        if ($platform->isWindows()) {
+            $this->dependencies['wsl'] = [
+                'installed' => $checker->isWslInstalled(),
+                'version' => null,
+                'label' => 'WSL2',
+                'description' => 'Linux subsystem that Docker Desktop and Lando run on. Installing it needs admin rights and may need a restart.',
                 'required' => true,
-            ],
-            'docker' => [
-                'installed' => $checker->isDockerInstalled(),
-                'version' => $checker->getDockerVersion(),
-                'label' => 'Docker Desktop',
-                'description' => 'Container runtime engine',
+            ];
+
+            $this->dependencies['putty'] = [
+                'installed' => $checker->isPuttyInstalled(),
+                'version' => $checker->getPuttyVersion(),
+                'label' => 'PuTTY',
+                'description' => 'Required for SSH connections to remote sites',
                 'required' => true,
-            ],
+            ];
+        }
+
+        if (! $platform->isWindows()) {
+            $this->dependencies['sshpass'] = [
+                'installed' => $checker->isSshpassInstalled(),
+                'version' => null,
+                'label' => 'sshpass',
+                'description' => 'Required for SSH connections to remote sites (clone and sync)',
+                'required' => true,
+            ];
+        }
+
+        $this->dependencies['lando'] = [
+            'installed' => $checker->isLandoInstalled(),
+            'version' => $checker->getLandoVersion(),
+            'label' => 'Lando',
+            'description' => 'Container-based local development environment',
+            'required' => true,
+        ];
+
+        $this->dependencies['docker'] = [
+            'installed' => $checker->isDockerInstalled(),
+            'version' => $checker->getDockerVersion(),
+            'label' => 'Docker Desktop',
+            'description' => 'Container runtime engine',
+            'required' => true,
+        ];
+
+        $this->dependencies['lando-plugins'] = [
+            'installed' => $checker->isLandoSetupComplete(),
+            'version' => null,
+            // Lando 3.26.9 bundles its plugins (the WordPress recipe included) in the executable, so on that release
+            // this step installs Docker Compose and creates the Lando certificate and network ("installed 0 of 0 plugins").
+            // lando setup also installs any plugin a later release stops bundling, so the step stays required.
+            'label' => 'Lando Setup',
+            'description' => 'Docker Compose, certificate, network and any Lando plugins not bundled (runs lando setup).'
+                .($platform->isWindows() ? ' Windows asks you to trust the Lando certificate: click Yes.' : ''),
+            'required' => true,
+            'install_action' => 'runLandoSetup',
         ];
 
         if ($platform->isMacAppleSilicon()) {
@@ -67,6 +112,13 @@ class DependencyCheck extends Component
 
     public function install(string $dependency): void
     {
+        // lando-plugins has its own install flow via runLandoSetup()
+        if ($dependency === 'lando-plugins') {
+            $this->runLandoSetup();
+
+            return;
+        }
+
         $installer = app(DependencyInstaller::class);
         $platform = app(PlatformDetector::class);
 
@@ -86,7 +138,12 @@ class DependencyCheck extends Component
         if ($platform->isWindows()) {
             // Spread all PS args; the log redirect is PowerShell-native syntax.
             $shellArgs = $platform->powershellArgs();
-            $cmd = [...$shellArgs, "{$command} *> '".addslashes($this->installLogFile)."'"];
+            // WSL2 and Docker run their script in a separate process that appends to the install log itself. A *>
+            // redirect onto that same file empties it and holds it open, so the script's lines were lost and the log
+            // stayed at 0 bytes. Their own output goes to a side file instead.
+            $selfLogging = in_array($dependency, ['wsl', 'docker'], true);
+            $redirectTarget = addslashes($this->installLogFile).($selfLogging ? '.out' : '');
+            $cmd = [...$shellArgs, "{$command} *> '{$redirectTarget}'"];
         } else {
             $cmd = [$platform->shellWrapper(), $platform->shellFlag(), "{$command} > ".escapeshellarg($this->installLogFile).' 2>&1'];
         }
@@ -106,6 +163,13 @@ class DependencyCheck extends Component
     public function pollInstallStatus(): void
     {
         if (! $this->installing) {
+            // Nothing is running from this page, but a dependency can still change underneath it (an install that
+            // outlived the page, a restart, a manual install). Re-check until everything is met, so the list
+            // never shows stale state.
+            if (! $this->allRequiredMet()) {
+                $this->checkDependencies();
+            }
+
             return;
         }
 
@@ -119,14 +183,27 @@ class DependencyCheck extends Component
 
         $this->checkDependencies();
 
-        // lando setup has no matching dependency key — detect completion via log marker
+        // lando setup: detect completion via log marker OR dependency check
         if ($this->installingDep === 'lando-setup') {
-            if (str_contains($this->installOutput, '[Lando Studio] lando setup finished')) {
+            $dep = $this->dependencies['lando-plugins'] ?? null;
+            // lando setup exits 0 even when it fails, and the finish line is written either way, so the error text
+            // decides: a finished run with an error is a failure, not success.
+            $finished = str_contains($this->installOutput, '[Lando Studio] lando setup finished');
+            if ($finished && CommandLogErrorDetector::indicatesFailure($this->installOutput)) {
                 $this->installing = false;
                 $this->installingDep = '';
                 $this->installLogFile = '';
                 $this->dispatch('lando-studio-scroll-terminal');
-                $this->notifySuccess('Lando plugins installed successfully!');
+                $this->notifyError('Lando setup failed. The log shows the error.');
+
+                return;
+            }
+            if (($dep && $dep['installed']) || $finished) {
+                $this->installing = false;
+                $this->installingDep = '';
+                $this->installLogFile = '';
+                $this->dispatch('lando-studio-scroll-terminal');
+                $this->notifySuccess('Lando setup finished successfully!');
             }
 
             return;
@@ -153,6 +230,7 @@ class DependencyCheck extends Component
         }
 
         $platform = app(PlatformDetector::class);
+        $installer = app(DependencyInstaller::class);
 
         $this->installing = true;
         $this->installingDep = 'lando-setup';
@@ -166,11 +244,16 @@ class DependencyCheck extends Component
 
         if ($platform->isWindows()) {
             $log = addslashes($this->installLogFile);
-            $cmd = [...$platform->powershellArgs(), "& \"{$lando}\" setup --yes *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
+            $cmd = [...$platform->powershellArgs(), $platform->powershellStepPrefix()."& \"{$lando}\" setup --yes *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
         } else {
             $logArg = escapeshellarg($this->installLogFile);
             $markerArg = escapeshellarg($marker);
-            $command = escapeshellarg($lando)." setup --yes > {$logArg} 2>&1; echo {$markerArg} >> {$logArg}";
+            // On Linux, lando setup's CA step needs a sudo password this run cannot ask for. Skip that step
+            // in lando setup and trust the CA with pkexec (desktop prompt) once setup has created it.
+            $linux = $platform->os() === 'linux';
+            $setup = escapeshellarg($lando).' setup --yes'.($linux ? ' --skip-install-ca' : '');
+            $caStep = $linux ? ' && '.$installer->installLandoCaLinux().' >> '.$logArg.' 2>&1' : '';
+            $command = "{$setup} > {$logArg} 2>&1{$caStep}; echo {$markerArg} >> {$logArg}";
             $cmd = [$platform->shellWrapper(), $platform->shellFlag(), $command];
         }
 

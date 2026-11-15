@@ -1,4 +1,4 @@
-<div @if($actionRunning || $isExecuting) wire:poll.3s="pollActionStatus" @endif>
+<div @if($actionRunning || $isExecuting) wire:poll.3s="pollActionStatus" @else wire:poll.keep-alive.15s="checkRealStatus" @endif>
     <div class="flex items-start justify-between">
         <div>
             <flux:heading size="xl">{{ $site->name }}</flux:heading>

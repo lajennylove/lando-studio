@@ -53,7 +53,7 @@ jobs:
       - name: Prepare .env
         run: |
           cp .env.example .env
-          php artisan key:generate --force
+          # No key here: the app creates its own on first run and keeps it in the user's storage folder.
           php artisan config:clear
 
       - name: Build frontend assets

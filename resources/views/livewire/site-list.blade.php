@@ -1,4 +1,4 @@
-<div>
+<div wire:poll.keep-alive.15s="syncStatuses">
     @if($sites->isEmpty())
         <div class="px-3 py-4 text-center">
             <flux:text class="text-sm text-zinc-400">No sites yet</flux:text>
@@ -16,6 +16,7 @@
                             'running' => 'bg-green-500',
                             'creating' => 'bg-blue-500 animate-pulse',
                             'error' => 'bg-red-500',
+                            'stopped' => 'bg-red-400',
                             default => 'bg-zinc-400',
                         } }}"></span>
                         <span class="truncate">{{ $site->name }}</span>

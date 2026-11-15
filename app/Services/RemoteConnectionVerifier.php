@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\RemoteSite;
+use App\Support\PuttyHostKey;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 
@@ -14,6 +15,11 @@ use Illuminate\Support\Facades\Process;
  */
 final class RemoteConnectionVerifier
 {
+    public function __construct(
+        private PlatformDetector $platform,
+        private DependencyChecker $checker,
+    ) {}
+
     /**
      * @param  string|null  $sshPasswordOverride  Plain text; if null/empty, uses {@see RemoteSite::$ssh_password}
      * @param  string|null  $dbPasswordOverride  Plain text; if null/empty, uses {@see RemoteSite::$db_password}
@@ -23,6 +29,10 @@ final class RemoteConnectionVerifier
         ?string $sshPasswordOverride = null,
         ?string $dbPasswordOverride = null,
     ): RemoteVerificationResult {
+        // SSH + schema probes can take up to 120s combined; prevent PHP's
+        // max_execution_time (typically 30s) from killing the Livewire request.
+        set_time_limit(0);
+
         $sshPass = (is_string($sshPasswordOverride) && $sshPasswordOverride !== '')
             ? $sshPasswordOverride
             : (string) $remote->ssh_password;
@@ -51,16 +61,32 @@ final class RemoteConnectionVerifier
 
         $target = $remote->ssh_user.'@'.$remote->ssh_server_ip;
 
-        $sshProbe = Process::env(['SSHPASS' => $sshPass])
-            ->timeout(30)
-            ->run([
-                'sshpass', '-e', 'ssh', '-T',
-                '-o', 'StrictHostKeyChecking=no',
-                '-o', 'ConnectTimeout=20',
-                '-o', 'BatchMode=no',
-                $target,
-                'echo', 'LANDO_STUDIO_SSH_OK',
-            ]);
+        if ($this->platform->isWindows()) {
+            $plinkPath = $this->checker->getPlinkPath();
+            if (! $plinkPath) {
+                return RemoteVerificationResult::sshFailed(
+                    'PuTTY (plink.exe) is not installed. Install it from Settings > System Dependencies, then retry.'
+                );
+            }
+
+            // Plink asks about an unknown host key on the console, not on stdin, so piping "y" hangs. Read the
+            // fingerprint in batch mode and pass it back with -hostkey instead.
+            $hostKey = PuttyHostKey::argumentsFor($plinkPath, $target);
+            $sshProbe = Process::timeout(30)
+                ->env(['LANDO_STUDIO_SSH_PW' => $sshPass])
+                ->run($this->plinkViaPowerShell($plinkPath, $target, 'echo LANDO_STUDIO_SSH_OK', $hostKey));
+        } else {
+            $sshProbe = Process::env(['SSHPASS' => $sshPass])
+                ->timeout(30)
+                ->run([
+                    'sshpass', '-e', 'ssh', '-T',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'ConnectTimeout=20',
+                    '-o', 'BatchMode=no',
+                    $target,
+                    'echo', 'LANDO_STUDIO_SSH_OK',
+                ]);
+        }
 
         $sshOut = $sshProbe->output().$sshProbe->errorOutput();
         $sshExitCode = $sshProbe->exitCode();
@@ -87,25 +113,39 @@ final class RemoteConnectionVerifier
             );
         }
 
-        $schemaProbe = Process::env(['SSHPASS' => $sshPass])
-            ->timeout(90)
-            ->run([
-                'sshpass', '-e', 'ssh', '-T',
-                '-o', 'StrictHostKeyChecking=no',
-                '-o', 'ConnectTimeout=20',
-                $target,
-                'mysqldump',
-                '--no-data',
-                '--single-transaction',
-                '-u', $remote->db_user,
-                '-p'.$dbPass,
-                $remote->db_name,
-            ]);
+        if ($this->platform->isWindows()) {
+            // plink joins remaining args as the remote command; pass as a single string
+            // so special chars in db_user/db_name are handled by the remote shell.
+            $dbCmd = sprintf(
+                'mysqldump --no-data --single-transaction -u %s -p%s %s',
+                escapeshellarg((string) $remote->db_user),
+                escapeshellarg($dbPass),
+                escapeshellarg((string) $remote->db_name),
+            );
+            $schemaProbe = Process::timeout(90)
+                ->env(['LANDO_STUDIO_SSH_PW' => $sshPass])
+                ->run($this->plinkViaPowerShell($plinkPath, $target, $dbCmd, $hostKey));
+        } else {
+            $schemaProbe = Process::env(['SSHPASS' => $sshPass])
+                ->timeout(90)
+                ->run([
+                    'sshpass', '-e', 'ssh', '-T',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'ConnectTimeout=20',
+                    $target,
+                    'mysqldump',
+                    '--no-data',
+                    '--single-transaction',
+                    '-u', $remote->db_user,
+                    '-p'.$dbPass,
+                    $remote->db_name,
+                ]);
+        }
 
         $dbOut = $schemaProbe->output().$schemaProbe->errorOutput();
         $dbExitCode = $schemaProbe->exitCode();
         $hasDumpMarker = str_contains($dbOut, 'MariaDB dump') || str_contains($dbOut, 'MySQL dump');
-        $hasAccessDenied = stripos($dbOut, 'Access denied') !== false || stripos($dbOut, '1045') !== false;
+        $hasAccessDenied = self::isAccessDenied($dbOut);
 
         Log::debug('RemoteConnectionVerifier: DB probe result', [
             'exit_code' => $dbExitCode,
@@ -136,5 +176,39 @@ final class RemoteConnectionVerifier
         Log::info('RemoteConnectionVerifier: verification passed');
 
         return RemoteVerificationResult::success();
+    }
+
+    /**
+     * Build a PowerShell command array that runs plink in batch mode (never waits for input), with the host key
+     * accepted through `-hostkey`. Returns an array suitable for Process::run().
+     *
+     * @param  list<string>  $hostKeyArgs  From {@see PuttyHostKey::argumentsFor()}
+     * @return list<string>
+     */
+    private function plinkViaPowerShell(string $plinkPath, string $target, string $remoteCmd, array $hostKeyArgs = []): array
+    {
+        $esc = static fn (string $v): string => str_replace("'", "''", $v);
+        $hostKey = $hostKeyArgs === [] ? '' : sprintf("-hostkey '%s' ", $esc($hostKeyArgs[1]));
+
+        // The password is not in this string. The caller passes it as LANDO_STUDIO_SSH_PW, and PowerShell reads it
+        // from there. Passing it inline lets cmd.exe rewrite characters such as ! % ^ before plink sees them.
+        $ps = sprintf(
+            "& '%s' -batch %s-ssh -pw \$env:LANDO_STUDIO_SSH_PW -T '%s' '%s'",
+            $esc($plinkPath),
+            $hostKey,
+            $esc($target),
+            $esc($remoteCmd),
+        );
+
+        return ['powershell', '-NoProfile', '-Command', $ps];
+    }
+
+    /**
+     * Whether mysqldump output reports a rejected login. Matches MySQL's own error text only: a bare "1045"
+     * is common in dump output (AUTO_INCREMENT values, data), and it does not mean the login failed.
+     */
+    public static function isAccessDenied(string $output): bool
+    {
+        return stripos($output, 'Access denied for user') !== false || str_contains($output, 'ERROR 1045');
     }
 }

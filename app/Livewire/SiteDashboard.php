@@ -13,6 +13,7 @@ use App\Services\PlatformDetector;
 use App\Services\RemoteConnectionVerifier;
 use App\Services\SiteManager;
 use App\Support\LogContentUtf8;
+use App\Support\StepLogActivity;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
@@ -186,8 +187,13 @@ class SiteDashboard extends Component
             return;
         }
 
-        $running = $lando->isRunning($this->site->path, $this->site->name);
-        $newStatus = $running ? SiteStatus::Running : SiteStatus::Stopped;
+        $states = $lando->appRunningStates();
+        if ($states === null) {
+            // lando list gave no answer (Docker stopped or starting). Keep the stored status instead of showing "stopped".
+            return;
+        }
+
+        $newStatus = ($states[$this->site->name] ?? false) ? SiteStatus::Running : SiteStatus::Stopped;
 
         if ($this->site->status !== $newStatus && $this->site->status !== SiteStatus::Creating) {
             $this->site->update(['status' => $newStatus]);
@@ -255,7 +261,10 @@ class SiteDashboard extends Component
         $manager = app(SiteManager::class);
         $destroyCmd = $manager->destroySite($this->site);
         $deleteCmd = $manager->getDeletePath($this->site);
-        $combined = "{$destroyCmd} && {$deleteCmd}";
+
+        // Always run both: the folder must go even when lando destroy fails or no container exists any more.
+        // (PS5 has no &&; ';' works in every shell.)
+        $combined = "{$destroyCmd}; {$deleteCmd}";
 
         $this->runDestroyAction($combined);
     }
@@ -282,8 +291,12 @@ class SiteDashboard extends Component
 
         $wrapped = $platform->wrapCommandWithLogRedirect($shellCommand, $logFile);
 
+        $cmd = $platform->isWindows()
+            ? [...$platform->powershellArgs(), $wrapped]
+            : [$platform->shellWrapper(), $platform->shellFlag(), $wrapped];
+
         ChildProcess::start(
-            cmd: [$platform->shellWrapper(), $platform->shellFlag(), $wrapped],
+            cmd: $cmd,
             alias: 'destroy-site-'.$this->site->id.'-'.uniqid(),
         );
     }
@@ -314,13 +327,19 @@ class SiteDashboard extends Component
             return;
         }
 
-        $path = $this->site->path.DIRECTORY_SEPARATOR.'wp';
         $platform = app(PlatformDetector::class);
+        $base = $platform->normalizePathSeparators($this->site->path);
+        $path = $base.DIRECTORY_SEPARATOR.'wp';
+
+        // If the wp subfolder doesn't exist yet, open the site root instead.
+        if (! is_dir($path)) {
+            $path = $base;
+        }
 
         $cmd = match ($platform->os()) {
-            'macos' => "open '{$path}'",
+            'macos' => "open '".str_replace("'", "'\\''", $path)."'",
             'windows' => "explorer \"{$path}\"",
-            default => "xdg-open '{$path}'",
+            default => "xdg-open '".str_replace("'", "'\\''", $path)."'",
         };
 
         ChildProcess::start(
@@ -606,11 +625,18 @@ class SiteDashboard extends Component
             return;
         }
 
-        $content = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
+        $rawContent = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
+        $marker = PlatformDetector::STEP_DONE_MARKER;
+        $hasMarker = str_contains($rawContent, $marker);
+        $content = str_replace($marker, '', $rawContent);
         $this->actionOutput = $content;
         $this->dispatch('lando-studio-scroll-terminal');
 
-        if ($elapsed > 600) {
+        // ── 1. Completion marker — process definitely exited ────────────────
+        $actionDone = $hasMarker;
+
+        // ── 2. Overall timeout — only if marker not found ───────────────────
+        if (! $actionDone && $elapsed > 600) {
             $this->actionRunning = false;
             $this->actionLabel = '';
             $this->actionStartedAt = null;
@@ -619,8 +645,13 @@ class SiteDashboard extends Component
             return;
         }
 
-        $lastModified = filemtime($logFile);
-        if ((time() - $lastModified) > 30) {
+        // ── 3. Inactivity fallback — marker not written (crash/kill) ────────
+        if (! $actionDone) {
+            $lastModified = StepLogActivity::lastActivity($logFile);
+            $actionDone = (time() - $lastModified) > 30;
+        }
+
+        if ($actionDone) {
             if ($this->actionLabel === 'Destroying') {
                 if ($this->destroyLogHasFatalError($content)) {
                     $this->actionRunning = false;
@@ -667,6 +698,7 @@ class SiteDashboard extends Component
             'Error response from daemon',
             'Cannot connect to the Docker daemon',
             'EACCES: permission denied',
+            'Site folder could not be removed',
         ];
 
         foreach ($fatalPatterns as $pattern) {

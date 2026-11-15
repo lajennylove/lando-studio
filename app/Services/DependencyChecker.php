@@ -24,7 +24,22 @@ class DependencyChecker
 
     public function allRequiredInstalled(): bool
     {
-        return $this->isLandoInstalled() && $this->isDockerInstalled();
+        // Windows needs WSL2 and PuTTY; Linux and macOS need sshpass. The start page redirects to setup when this is false.
+        $platformRequirements = $this->platform->isWindows()
+            ? $this->isWslInstalled() && $this->isPuttyInstalled()
+            : $this->isSshpassInstalled();
+
+        return $platformRequirements && $this->isLandoInstalled() && $this->isDockerInstalled() && $this->isLandoSetupComplete();
+    }
+
+    /**
+     * Whether the WSL package is installed on Windows. Docker Desktop needs WSL2, and Lando uses it too.
+     * The package installs its program folder; the stub wsl.exe in System32 exists even when it is not
+     * installed, so the program folder is the check. Turning the Windows features on may still need a restart.
+     */
+    public function isWslInstalled(): bool
+    {
+        return $this->platform->isWindows() && file_exists('C:\\Program Files\\WSL\\wsl.exe');
     }
 
     public function isLandoInstalled(): bool
@@ -43,7 +58,16 @@ class DependencyChecker
             return file_exists($bin.'lando.cmd') || file_exists($bin.'lando.exe');
         }
 
-        return false;
+        return file_exists($this->unixLandoPath());
+    }
+
+    /**
+     * Where setup-lando.sh puts the Lando CLI on Linux and macOS. The running app's PATH does not
+     * include this folder after the install, so the file is checked directly.
+     */
+    private function unixLandoPath(): string
+    {
+        return $this->platform->homeDir().'/.lando/bin/lando';
     }
 
     /** Full path to lando.cmd (preferred on Windows) or lando.exe fallback. */
@@ -82,12 +106,142 @@ class DependencyChecker
             || (PHP_OS_FAMILY === 'Darwin' && is_dir('/Applications/OrbStack.app'));
     }
 
+    /**
+     * Whether PuTTY's plink.exe is available on Windows.
+     * plink is required for SSH password-based connections (clone/sync operations).
+     */
+    public function isPuttyInstalled(): bool
+    {
+        if ($this->commandExists('plink')) {
+            return true;
+        }
+
+        return $this->getPlinkPath() !== null;
+    }
+
+    /**
+     * Full path to plink.exe, or null if not found.
+     * Checks the standard PuTTY install locations when not in PATH.
+     */
+    public function getPlinkPath(): ?string
+    {
+        $candidates = [
+            'C:\\Program Files\\PuTTY\\plink.exe',
+            'C:\\Program Files (x86)\\PuTTY\\plink.exe',
+            getenv('LOCALAPPDATA').'\\Programs\\PuTTY\\plink.exe',
+        ];
+
+        foreach ($candidates as $path) {
+            if ($path && file_exists($path)) {
+                return $path;
+            }
+        }
+
+        // Also check PATH via `where`
+        $result = @shell_exec('where plink 2>nul');
+        if ($result) {
+            $first = trim(explode("\n", $result)[0]);
+            if ($first && file_exists($first)) {
+                return $first;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether sshpass is available on Linux and macOS. The remote connection check and the clone and sync
+     * steps use it for password SSH; on Windows the app uses PuTTY's plink instead.
+     */
+    public function isSshpassInstalled(): bool
+    {
+        return ! $this->platform->isWindows() && $this->commandExists('sshpass');
+    }
+
+    /**
+     * Whether winget (Windows Package Manager) is available.
+     * Some Windows builds (LTSC, stripped images, older 10 builds) don't ship it.
+     */
+    public function isWingetInstalled(): bool
+    {
+        return $this->platform->isWindows() && $this->commandExists('winget');
+    }
+
+    /**
+     * Whether `lando setup` has finished. Lando 3 fetches @lando/wordpress when a site first needs it, and
+     * `lando setup` does not install it, so the plugin folder alone is not a reliable signal. Setup always
+     * creates the Lando CA and the orchestrator (Docker Compose), so those count too.
+     */
+    public function isLandoSetupComplete(): bool
+    {
+        $home = $this->platform->homeDir();
+        $landoDir = $home.DIRECTORY_SEPARATOR.'.lando';
+        $setupOutputs = file_exists($landoDir.DIRECTORY_SEPARATOR.'certs'.DIRECTORY_SEPARATOR.'LandoCA.crt')
+            && ! empty(glob($landoDir.DIRECTORY_SEPARATOR.'bin'.DIRECTORY_SEPARATOR.'docker-compose-*'));
+
+        if ($setupOutputs) {
+            // On Windows the CA file alone is not enough: Windows asks the user to trust it, and a cancelled
+            // dialog leaves the file behind. HTTPS on *.lndo.site fails later, so the store has to hold it too.
+            return $this->isLandoCaTrusted();
+        }
+
+        $pluginDir = $this->getLandoPluginsDir();
+        if (! $pluginDir) {
+            return false;
+        }
+
+        return is_dir($pluginDir.DIRECTORY_SEPARATOR.'@lando'.DIRECTORY_SEPARATOR.'wordpress');
+    }
+
+    /**
+     * Whether Windows trusts the Lando CA (true on other platforms, where lando setup handles it).
+     *
+     * Compares the SHA-1 thumbprint of ~/.lando/certs/LandoCA.crt with the user and machine root stores through
+     * certutil, which reads either store without admin rights. False when the file is missing or unreadable.
+     */
+    public function isLandoCaTrusted(): bool
+    {
+        if (! $this->platform->isWindows()) {
+            return true;
+        }
+
+        $pem = @file_get_contents($this->platform->homeDir().'\\.lando\\certs\\LandoCA.crt');
+        $thumbprint = $pem ? openssl_x509_fingerprint($pem, 'sha1') : false;
+        if (! is_string($thumbprint) || ! preg_match('/^[0-9a-f]{40}$/i', $thumbprint)) {
+            return false;
+        }
+
+        foreach (['-user ', ''] as $scope) {
+            exec("certutil {$scope}-store Root {$thumbprint} 2>nul", $output, $code);
+            if ($code === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve the Lando plugins directory (~/.lando/plugins).
+     */
+    private function getLandoPluginsDir(): ?string
+    {
+        $home = $this->platform->homeDir();
+        if (! $home) {
+            return null;
+        }
+
+        $dir = $home.DIRECTORY_SEPARATOR.'.lando'.DIRECTORY_SEPARATOR.'plugins';
+
+        return is_dir($dir) ? $dir : null;
+    }
+
     public function getLandoVersion(): ?string
     {
         // On Windows use the full path in case the child process PATH is frozen.
         $cmd = $this->platform->isWindows()
             ? '"'.$this->windowsLandoExe().'" version'
-            : 'lando version';
+            : escapeshellarg($this->getLandoPath() ?? 'lando').' version';
 
         return $this->getCommandOutput($cmd);
     }
@@ -107,6 +261,23 @@ class DependencyChecker
         return $this->getCommandOutput('orb version');
     }
 
+    public function getPuttyVersion(): ?string
+    {
+        $plink = $this->getPlinkPath() ?? 'plink';
+        $result = $this->getCommandOutput('"'.$plink.'" -V');
+
+        if (! $result) {
+            return null;
+        }
+
+        // plink outputs: "plink: Release 0.82" — extract the version number
+        if (preg_match('/Release\s+(\S+)/i', $result, $m)) {
+            return $m[1];
+        }
+
+        return trim(explode("\n", $result)[0]);
+    }
+
     public function getLandoPath(): ?string
     {
         // On Windows, always use the known install path so child processes launched by
@@ -118,7 +289,9 @@ class DependencyChecker
             return file_exists($exe) ? $exe : ($this->getCommandPath('lando') ?? $exe);
         }
 
-        return $this->getCommandPath('lando');
+        // Fall back to the install location when PATH does not have it (see unixLandoPath()).
+        return $this->getCommandPath('lando')
+            ?? (file_exists($this->unixLandoPath()) ? $this->unixLandoPath() : null);
     }
 
     private function commandExists(string $command): bool
