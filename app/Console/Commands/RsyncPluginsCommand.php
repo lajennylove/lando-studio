@@ -20,9 +20,15 @@ class RsyncPluginsCommand extends Command
 {
     protected $signature = 'lando:rsync-plugins
         {--remote-id= : ID of the RemoteSite model}
-        {--output=    : Local path for the plugins directory}';
+        {--output=    : Local path for the plugins directory}
+        {--container= : Docker container that has wp-content/plugins on a volume; rsync then runs inside it}';
 
     protected $description = 'Download wp-content/plugins from remote via pscp (Windows, replaces rsync)';
+
+    private const DOCKER_EXE = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe';
+
+    /** Where wp-content/plugins is mounted inside the appserver container. */
+    private const CONTAINER_PLUGINS_PATH = '/app/wp/wp-content/plugins/';
 
     public function handle(DependencyChecker $checker): int
     {
@@ -40,6 +46,11 @@ class RsyncPluginsCommand extends Command
             $this->error("[Lando Studio ERROR] RemoteSite #{$remoteId} not found.");
 
             return self::FAILURE;
+        }
+
+        $container = (string) $this->option('container');
+        if ($container !== '') {
+            return $this->syncInsideContainer($remote, $container);
         }
 
         $plinkPath = $checker->getPlinkPath();
@@ -139,6 +150,77 @@ class RsyncPluginsCommand extends Command
 
         if ($exitCode !== 0) {
             $this->error("[Lando Studio ERROR] pscp exited with code {$exitCode}. Check SSH credentials.");
+
+            return self::FAILURE;
+        }
+
+        $this->line('[Lando Studio] Plugins synced successfully.');
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * Pulls the plugins with rsync running inside the appserver container, straight onto the plugins volume. The
+     * volume hides the host's wp/wp-content/plugins folder, so pscp on the host would write where nothing reads, and
+     * the container's own disk is far faster than a share of C:\. The password travels in SSHPASS (copied from this
+     * process's environment by `docker exec -e SSHPASS`), never on a command line.
+     */
+    private function syncInsideContainer(RemoteSite $remote, string $container): int
+    {
+        $docker = is_file(self::DOCKER_EXE) ? self::DOCKER_EXE : 'docker';
+        $source = "{$remote->ssh_user}@{$remote->ssh_server_ip}:".$this->remotePluginsDirectory($remote);
+
+        $this->line("[Lando Studio] Syncing plugins from {$source}");
+        $this->line("[Lando Studio] → {$container}:".self::CONTAINER_PLUGINS_PATH);
+
+        $cmd = [
+            $docker, 'exec', '-e', 'SSHPASS', '-u', 'www-data', $container,
+            'sshpass', '-e', 'rsync', '-azq',
+            '-e', 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null',
+            $source, self::CONTAINER_PLUGINS_PATH,
+        ];
+
+        $stdoutPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'lando-rsync-'.uniqid().'.out';
+        $stderrPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'lando-rsync-'.uniqid().'.err';
+
+        $proc = proc_open(
+            $cmd,
+            [0 => ['pipe', 'r'], 1 => ['file', $stdoutPath, 'w'], 2 => ['file', $stderrPath, 'w']],
+            $pipes,
+            null,
+            array_merge(getenv(), ['SSHPASS' => (string) $remote->ssh_password]),
+        );
+        if (! is_resource($proc)) {
+            $this->error('[Lando Studio ERROR] Failed to start docker exec.');
+
+            return self::FAILURE;
+        }
+
+        fclose($pipes[0]);
+
+        $lastHeartbeat = time();
+        while (proc_get_status($proc)['running']) {
+            if (time() - $lastHeartbeat >= 20) {
+                $this->line('[Lando Studio] Plugin sync in progress '.date('H:i:s'));
+                $lastHeartbeat = time();
+            }
+
+            usleep(500_000);
+        }
+
+        $exitCode = proc_close($proc);
+
+        foreach ([$stdoutPath => '', $stderrPath => '[rsync] '] as $path => $prefix) {
+            $text = is_file($path) ? trim((string) file_get_contents($path)) : '';
+            if ($text !== '') {
+                $this->line($prefix.$text);
+            }
+            @unlink($path);
+        }
+
+        // 24 means a file vanished on the remote while it was copied; the rest of the tree is complete.
+        if ($exitCode !== 0 && $exitCode !== 24) {
+            $this->error("[Lando Studio ERROR] rsync exited with code {$exitCode}. Check SSH credentials and that the site is running.");
 
             return self::FAILURE;
         }

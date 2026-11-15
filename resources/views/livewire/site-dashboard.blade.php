@@ -11,6 +11,9 @@
                     default => 'bg-zinc-400',
                 } }}"></span>
                 <flux:text class="text-sm capitalize">{{ $site->status->value ?? $site->status }}</flux:text>
+                @if($this->isOptimized)
+                    <flux:badge size="sm" color="emerald" title="WordPress core and plugins live in Docker volumes, not on your disk.">Optimized</flux:badge>
+                @endif
                 <flux:button
                     wire:click="checkRealStatus"
                     wire:loading.attr="disabled"
@@ -350,6 +353,72 @@
             @endif
         </div>
     </div>
+
+    {{-- Development plugins (optimized mode) --}}
+    @if($this->isOptimized)
+        <div class="mt-8" wire:init="loadPlugins">
+            <div class="flex items-center justify-between">
+                <div>
+                    <flux:heading size="sm">Development plugins</flux:heading>
+                    <flux:text class="mt-1 text-sm text-zinc-500">
+                        Plugins live inside Docker, so your editor can't see them. Turn one on to mount it from
+                        <span class="font-mono">wp/wp-content/plugins-dev/&lt;plugin&gt;</span> on your disk. The site rebuilds, which takes a few minutes.
+                    </flux:text>
+                </div>
+                <flux:button wire:click="loadPlugins" wire:loading.attr="disabled" wire:target="loadPlugins" size="xs" variant="ghost" icon="arrow-path" title="Reload the plugin list" />
+            </div>
+
+            @if($installedPlugins === null)
+                <flux:text class="mt-3 text-sm text-zinc-400">Start the site to list its plugins.</flux:text>
+            @endif
+
+            @if(count($this->pluginRows) > 0)
+                <div class="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-700 divide-y divide-zinc-200 dark:divide-zinc-700">
+                    @foreach($this->pluginRows as $plugin)
+                        @php $isDev = in_array($plugin, $this->devPlugins, true); @endphp
+                        <div class="flex items-center justify-between px-4 py-2" wire:key="dev-plugin-{{ $plugin }}">
+                            <div>
+                                <span class="font-mono text-sm">{{ $plugin }}</span>
+                                @if($isDev)
+                                    <span class="ml-2 text-xs text-emerald-600 dark:text-emerald-400">from disk</span>
+                                @endif
+                            </div>
+                            <flux:switch
+                                :checked="$isDev"
+                                wire:click="toggleDevPlugin('{{ $plugin }}')"
+                                :disabled="$actionRunning || $isExecuting"
+                            />
+                        </div>
+                    @endforeach
+                </div>
+            @endif
+
+            <form wire:submit="addDevPlugin" class="mt-4 flex flex-wrap items-start gap-2">
+                <div>
+                    <input
+                        wire:model="newDevPluginName"
+                        type="text"
+                        placeholder="my-plugin"
+                        class="text-sm bg-transparent border border-zinc-200 dark:border-zinc-600 rounded-md px-3 py-1.5 font-mono dark:text-white placeholder-zinc-400"
+                    />
+                    @error('newDevPluginName') <p class="text-xs text-red-500 mt-1">{{ $message }}</p> @enderror
+                </div>
+                <div class="flex-1 min-w-64">
+                    <input
+                        wire:model="newDevPluginRepo"
+                        type="text"
+                        placeholder="Git address to clone (optional)"
+                        class="w-full text-sm bg-transparent border border-zinc-200 dark:border-zinc-600 rounded-md px-3 py-1.5 font-mono dark:text-white placeholder-zinc-400"
+                    />
+                    @error('newDevPluginRepo') <p class="text-xs text-red-500 mt-1">{{ $message }}</p> @enderror
+                </div>
+                <flux:button type="submit" size="sm" variant="primary" icon="plus" :disabled="$actionRunning || $isExecuting">Add plugin from disk</flux:button>
+            </form>
+            <flux:text class="mt-1 text-xs text-zinc-400">
+                Add creates the folder (or clones it) and mounts it. An existing folder is mounted as it is. To install a third-party plugin, use wp-admin or <span class="font-mono">lando wp plugin install</span> as usual; it will appear in the list.
+            </flux:text>
+        </div>
+    @endif
 
     {{-- New Remote Site Modal --}}
     <flux:modal wire:model="showNewRemoteModal" class="max-w-xl">

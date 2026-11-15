@@ -111,16 +111,24 @@ class SshService
             .' && kill $LANDO_STUDIO_HB 2>/dev/null && wait $LANDO_STUDIO_HB 2>/dev/null && trap - EXIT';
     }
 
-    public function buildRsyncPluginsCommand(RemoteSite $remote, string $localPluginsPath): string
+    /**
+     * @param  string|null  $volumeContainer  Windows only: the appserver container whose wp-content/plugins is a Docker
+     *                                        volume. The sync then runs rsync inside it instead of pscp on the host, because the volume hides the host folder.
+     */
+    public function buildRsyncPluginsCommand(RemoteSite $remote, string $localPluginsPath, ?string $volumeContainer = null): string
     {
         if ($this->platform->isWindows()) {
-            // rsync is unavailable on Windows. Delegate to a PHP artisan command that uses
-            // pscp (PuTTY SCP, bundled with plink) for recursive plugin download.
+            // rsync is unavailable on the Windows host. Delegate to a PHP artisan command that uses
+            // pscp (PuTTY SCP, bundled with plink) for recursive plugin download, or that runs rsync
+            // inside the container when the plugins folder is a volume.
             $php = '"'.str_replace('"', '""', PHP_BINARY).'"';
             $artisan = '"'.str_replace('"', '""', base_path('artisan')).'"';
             $output = '"'.str_replace('"', '""', $localPluginsPath).'"';
+            $container = $volumeContainer !== null && $volumeContainer !== ''
+                ? ' --container='.preg_replace('/[^A-Za-z0-9_.-]/', '', $volumeContainer)
+                : '';
 
-            return "& {$php} {$artisan} lando:rsync-plugins --remote-id={$remote->id} --output={$output}";
+            return "& {$php} {$artisan} lando:rsync-plugins --remote-id={$remote->id} --output={$output}{$container}";
         }
 
         $remotePlugins = $this->remotePluginsDirectory($remote);
