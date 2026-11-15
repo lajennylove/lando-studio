@@ -9,7 +9,8 @@ return [
 
     'deeplink_scheme' => env('NATIVEPHP_DEEPLINK_SCHEME'),
 
-    'author' => env('NATIVEPHP_APP_AUTHOR'),
+    // Shown as the publisher in Windows installer prompts. Without it, Electron's default ("GitHub, Inc.") is used.
+    'author' => env('NATIVEPHP_APP_AUTHOR', 'Jenny Martinez'),
 
     'copyright' => env('NATIVEPHP_APP_COPYRIGHT'),
 

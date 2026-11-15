@@ -7,12 +7,14 @@ use App\Livewire\Concerns\WithCommandExecution;
 use App\Livewire\Concerns\WithNotifications;
 use App\Models\RemoteSite;
 use App\Models\Site;
+use App\Services\DevPlugins;
 use App\Services\LandoService;
 use App\Services\LandoYamlGenerator;
 use App\Services\PlatformDetector;
 use App\Services\RemoteConnectionVerifier;
 use App\Services\SiteManager;
 use App\Support\LogContentUtf8;
+use App\Support\StepLogActivity;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
@@ -96,6 +98,14 @@ class SiteDashboard extends Component
 
     /** Steps cached for WithCommandExecution retry. */
     private ?array $cachedSyncSteps = null;
+
+    // Development plugins (optimized mode)
+    /** @var list<string>|null Plugin folders served by the container; null until loaded or while it is unreachable. */
+    public ?array $installedPlugins = null;
+
+    public string $newDevPluginName = '';
+
+    public string $newDevPluginRepo = '';
 
     public function mount(Site $site): void
     {
@@ -186,8 +196,13 @@ class SiteDashboard extends Component
             return;
         }
 
-        $running = $lando->isRunning($this->site->path, $this->site->name);
-        $newStatus = $running ? SiteStatus::Running : SiteStatus::Stopped;
+        $states = $lando->appRunningStates();
+        if ($states === null) {
+            // lando list gave no answer (Docker stopped or starting). Keep the stored status instead of showing "stopped".
+            return;
+        }
+
+        $newStatus = ($states[$this->site->name] ?? false) ? SiteStatus::Running : SiteStatus::Stopped;
 
         if ($this->site->status !== $newStatus && $this->site->status !== SiteStatus::Creating) {
             $this->site->update(['status' => $newStatus]);
@@ -237,6 +252,109 @@ class SiteDashboard extends Component
         $this->runAction('Rebuilding', app(LandoService::class)->rebuild($this->site->path));
     }
 
+    // ── Development plugins (optimized mode) ────────────────────────────────
+
+    /** Whether this site keeps core and plugins on Docker volumes. Read from its .lando.yml, the source of truth. */
+    public function getIsOptimizedProperty(): bool
+    {
+        return ! $this->isProjectMissingOnDisk() && LandoYamlGenerator::siteUsesVolumes($this->site->path);
+    }
+
+    /** @return list<string> */
+    public function getDevPluginsProperty(): array
+    {
+        return LandoYamlGenerator::devPluginsFor($this->site->path);
+    }
+
+    /** Plugin names to list: everything the container serves plus the ones mounted from disk. @return list<string> */
+    public function getPluginRowsProperty(): array
+    {
+        $rows = array_unique([...($this->installedPlugins ?? []), ...$this->devPlugins]);
+        sort($rows, SORT_NATURAL | SORT_FLAG_CASE);
+
+        return array_values($rows);
+    }
+
+    public function loadPlugins(): void
+    {
+        if (! $this->isOptimized) {
+            return;
+        }
+
+        $this->installedPlugins = app(DevPlugins::class)->installed($this->site->name);
+    }
+
+    public function toggleDevPlugin(string $plugin): void
+    {
+        if (! $this->canChangeDevPlugins($plugin)) {
+            return;
+        }
+
+        $plugins = app(DevPlugins::class);
+
+        if (in_array($plugin, $this->devPlugins, true)) {
+            $this->runAction('Unmounting plugin', $plugins->disableCommand($this->site->name, $this->site->path, $plugin));
+        } else {
+            $this->runAction('Mounting plugin', $plugins->enableCommand($this->site->name, $this->site->path, $plugin));
+        }
+    }
+
+    public function addDevPlugin(): void
+    {
+        $name = trim($this->newDevPluginName);
+        $repo = trim($this->newDevPluginRepo);
+
+        if ($repo !== '' && ! DevPlugins::isValidRepoUrl($repo)) {
+            $this->addError('newDevPluginRepo', 'Use an https:// or git@ repository address.');
+
+            return;
+        }
+
+        if ($name === '' && $repo !== '') {
+            $name = preg_replace('/\.git$/', '', basename(rtrim($repo, '/'))) ?? '';
+            $name = (string) preg_replace('/^.*:/', '', $name);
+        }
+
+        if (! LandoYamlGenerator::isValidPluginName($name)) {
+            $this->addError('newDevPluginName', 'Use letters, digits, dot, dash and underscore.');
+
+            return;
+        }
+
+        if (! $this->canChangeDevPlugins($name)) {
+            return;
+        }
+
+        $this->resetErrorBag(['newDevPluginName', 'newDevPluginRepo']);
+        $this->newDevPluginName = '';
+        $this->newDevPluginRepo = '';
+
+        $this->runAction('Mounting plugin', app(DevPlugins::class)->createCommand($this->site->name, $this->site->path, $name, $repo));
+    }
+
+    private function canChangeDevPlugins(string $plugin): bool
+    {
+        if (! $this->isOptimized) {
+            $this->notifyError('Development plugins need a site in optimized mode.');
+
+            return false;
+        }
+
+        if ($this->actionRunning || $this->isExecuting) {
+            $this->notifyError('Wait for the current action to finish.');
+
+            return false;
+        }
+
+        if (! LandoYamlGenerator::isValidPluginName($plugin)) {
+            $this->notifyError('That is not a valid plugin folder name.');
+
+            return false;
+        }
+
+        return true;
+    }
+
     public function confirmDestroy(): void
     {
         $this->showDestroyModal = true;
@@ -255,7 +373,10 @@ class SiteDashboard extends Component
         $manager = app(SiteManager::class);
         $destroyCmd = $manager->destroySite($this->site);
         $deleteCmd = $manager->getDeletePath($this->site);
-        $combined = "{$destroyCmd} && {$deleteCmd}";
+
+        // Always run both: the folder must go even when lando destroy fails or no container exists any more.
+        // (PS5 has no &&; ';' works in every shell.)
+        $combined = "{$destroyCmd}; {$deleteCmd}";
 
         $this->runDestroyAction($combined);
     }
@@ -282,8 +403,12 @@ class SiteDashboard extends Component
 
         $wrapped = $platform->wrapCommandWithLogRedirect($shellCommand, $logFile);
 
+        $cmd = $platform->isWindows()
+            ? [...$platform->powershellArgs(), $wrapped]
+            : [$platform->shellWrapper(), $platform->shellFlag(), $wrapped];
+
         ChildProcess::start(
-            cmd: [$platform->shellWrapper(), $platform->shellFlag(), $wrapped],
+            cmd: $cmd,
             alias: 'destroy-site-'.$this->site->id.'-'.uniqid(),
         );
     }
@@ -314,13 +439,19 @@ class SiteDashboard extends Component
             return;
         }
 
-        $path = $this->site->path.DIRECTORY_SEPARATOR.'wp';
         $platform = app(PlatformDetector::class);
+        $base = $platform->normalizePathSeparators($this->site->path);
+        $path = $base.DIRECTORY_SEPARATOR.'wp';
+
+        // If the wp subfolder doesn't exist yet, open the site root instead.
+        if (! is_dir($path)) {
+            $path = $base;
+        }
 
         $cmd = match ($platform->os()) {
-            'macos' => "open '{$path}'",
+            'macos' => "open '".str_replace("'", "'\\''", $path)."'",
             'windows' => "explorer \"{$path}\"",
-            default => "xdg-open '{$path}'",
+            default => "xdg-open '".str_replace("'", "'\\''", $path)."'",
         };
 
         ChildProcess::start(
@@ -606,11 +737,18 @@ class SiteDashboard extends Component
             return;
         }
 
-        $content = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
+        $rawContent = LogContentUtf8::forLivewire((string) file_get_contents($logFile));
+        $marker = PlatformDetector::STEP_DONE_MARKER;
+        $hasMarker = str_contains($rawContent, $marker);
+        $content = str_replace($marker, '', $rawContent);
         $this->actionOutput = $content;
         $this->dispatch('lando-studio-scroll-terminal');
 
-        if ($elapsed > 600) {
+        // ── 1. Completion marker — process definitely exited ────────────────
+        $actionDone = $hasMarker;
+
+        // ── 2. Overall timeout — only if marker not found ───────────────────
+        if (! $actionDone && $elapsed > 600) {
             $this->actionRunning = false;
             $this->actionLabel = '';
             $this->actionStartedAt = null;
@@ -619,8 +757,13 @@ class SiteDashboard extends Component
             return;
         }
 
-        $lastModified = filemtime($logFile);
-        if ((time() - $lastModified) > 30) {
+        // ── 3. Inactivity fallback — marker not written (crash/kill) ────────
+        if (! $actionDone) {
+            $lastModified = StepLogActivity::lastActivity($logFile);
+            $actionDone = (time() - $lastModified) > 30;
+        }
+
+        if ($actionDone) {
             if ($this->actionLabel === 'Destroying') {
                 if ($this->destroyLogHasFatalError($content)) {
                     $this->actionRunning = false;
@@ -641,17 +784,26 @@ class SiteDashboard extends Component
             $this->actionLabel = '';
             $this->actionStartedAt = null;
 
-            $newStatus = match ($completedAction) {
-                'Stopping' => SiteStatus::Stopped,
-                'Starting', 'Restarting', 'Rebuilding' => SiteStatus::Running,
+            $failedPluginMove = in_array($completedAction, ['Mounting plugin', 'Unmounting plugin'], true)
+                && str_contains($content, '[Lando Studio ERROR]');
+
+            $newStatus = match (true) {
+                $failedPluginMove => $this->site->status,
+                $completedAction === 'Stopping' => SiteStatus::Stopped,
+                in_array($completedAction, ['Starting', 'Restarting', 'Rebuilding', 'Mounting plugin', 'Unmounting plugin'], true) => SiteStatus::Running,
                 default => $this->site->status,
             };
             $this->site->update(['status' => $newStatus]);
             $this->site->refresh();
 
             $this->dispatch('site-status-changed')->to(SiteList::class);
-            $this->notifySuccess("{$completedAction} completed.");
+            if ($failedPluginMove) {
+                $this->notifyError("{$completedAction} failed. Check the output below.");
+            } else {
+                $this->notifySuccess("{$completedAction} completed.");
+            }
             $this->refreshSiteInfo();
+            $this->loadPlugins();
         }
     }
 
@@ -667,6 +819,7 @@ class SiteDashboard extends Component
             'Error response from daemon',
             'Cannot connect to the Docker daemon',
             'EACCES: permission denied',
+            'Site folder could not be removed',
         ];
 
         foreach ($fatalPatterns as $pattern) {

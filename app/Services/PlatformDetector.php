@@ -3,12 +3,33 @@
 namespace App\Services;
 
 use App\Livewire\Settings;
+use App\Support\StepLogActivity;
 
 class PlatformDetector
 {
     private ?string $os = null;
 
     private ?string $arch = null;
+
+    /**
+     * Whether this is an Arch-based Linux (Arch, Omarchy, Manjaro, EndeavourOS). Reads /etc/os-release
+     * for ID and ID_LIKE, because the Docker install script does not support these distributions.
+     */
+    public function isArchLinux(): bool
+    {
+        if ($this->os() !== 'linux') {
+            return false;
+        }
+
+        $ids = [];
+        foreach (explode("\n", @file_get_contents('/etc/os-release') ?: '') as $line) {
+            if (preg_match('/^(ID|ID_LIKE)=(.*)$/', trim($line), $m)) {
+                $ids = [...$ids, ...preg_split('/\s+/', trim($m[2], "\"' "))];
+            }
+        }
+
+        return in_array('arch', $ids, true);
+    }
 
     public function os(): string
     {
@@ -67,15 +88,30 @@ class PlatformDetector
         if (is_string($persisted) && trim($persisted) !== '') {
             $expanded = str_replace('~', $this->homeDir(), $persisted);
 
-            return rtrim($expanded, DIRECTORY_SEPARATOR);
+            return $this->normalizePathSeparators($expanded);
         }
 
         $configured = config('lando_dev.defaults.code_path');
         if ($configured) {
-            return rtrim($configured, DIRECTORY_SEPARATOR);
+            return $this->normalizePathSeparators($configured);
         }
 
         return $this->homeDir().DIRECTORY_SEPARATOR.'code'.DIRECTORY_SEPARATOR.'sites';
+    }
+
+    /**
+     * Normalize directory separators and strip trailing slashes.
+     * On Windows, converts all forward slashes to backslashes so paths
+     * stored with mixed separators (e.g. from user input or settings JSON)
+     * are safe to use with Set-Location and file system APIs.
+     */
+    public function normalizePathSeparators(string $path): string
+    {
+        if ($this->isWindows()) {
+            return rtrim(str_replace('/', '\\', $path), '\\');
+        }
+
+        return rtrim($path, '/');
     }
 
     public function shellWrapper(): string
@@ -105,23 +141,81 @@ class PlatformDetector
     }
 
     /**
+     * PowerShell snippet that must be prepended to any command that redirects
+     * output to a log file on Windows.
+     *
+     * Without this, PowerShell's *> / >> redirection uses the legacy Windows
+     * code page (cp1252/cp437), turning UTF-8 characters like ✔ (U+2714,
+     * bytes E2 9C 94) into garbled sequences such as "ΓêÜ".
+     *
+     * [Console]::OutputEncoding — how PS reads stdout from external processes.
+     * $OutputEncoding           — how PS writes to files via *> and >> streams.
+     */
+    public function powershellUtf8Prefix(): string
+    {
+        return '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; '
+            .'$OutputEncoding = [System.Text.Encoding]::UTF8; ';
+    }
+
+    /**
+     * PowerShell snippet that reloads PATH from the registry before a step runs.
+     *
+     * The app's process copies PATH once at launch, so a tool installed later in the same session (Docker Desktop,
+     * for example) is missing from it, and `lando start` cannot find docker-credential-desktop. Reading the
+     * machine and user values again picks up what the installers wrote.
+     *
+     * The two values are joined with `+ ';' +`. Writing `...('Machine').';'` instead is member access on a property
+     * named ";" in PowerShell: it returns null, drops the machine PATH (System32, Docker) and leaves only the user
+     * PATH, so `powershell` and `docker` could not be found and lando setup failed.
+     */
+    public function powershellPathPrefix(): string
+    {
+        return "\$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';'"
+            ." + [Environment]::GetEnvironmentVariable('Path', 'User'); ";
+    }
+
+    /**
+     * Everything a PowerShell step needs before its command: UTF-8 output and the current PATH.
+     */
+    public function powershellStepPrefix(): string
+    {
+        return $this->powershellUtf8Prefix().$this->powershellPathPrefix();
+    }
+
+    /**
      * Wrap a shell command so step logging does not steal stdout from inner redirects/pipes.
      *
-     * On Unix:  (command) > 'logfile' 2>&1
-     * On Windows (PowerShell): & { command } *> 'logfile'
+     * On Unix:  (command) > 'logfile' 2>&1; echo '[LANDO_STEP_DONE]' >> 'logfile'
+     * On Windows (PowerShell): & { command } *> 'logfile'; Add-Content -Path 'logfile' -Value '[LANDO_STEP_DONE]'
      *   *> captures all PS streams (stdout, stderr, verbose, warning…)
      *   Single-quoted path is a PS literal string — safe for any Windows path.
+     *   The completion marker lets pollers detect process exit without relying
+     *   solely on log-file inactivity (which races with the overall timeout).
      */
+    public const STEP_DONE_MARKER = '[LANDO_STEP_DONE]';
+
     public function wrapCommandWithLogRedirect(string $command, string $logFile): string
     {
+        $marker = self::STEP_DONE_MARKER;
+
         if ($this->isWindows()) {
             $log = str_replace("'", "''", $logFile); // escape PS single-quoted string
+            $heartbeat = $log.StepLogActivity::HEARTBEAT_SUFFIX;
 
-            return "& { {$command} } *> '{$log}'";
+            // A background job appends to <log>.hb every 15 s while the command runs. The *> redirect holds the log
+            // itself open, so the heartbeat cannot go there, and the runner reads the newer of the two modified times
+            // (StepLogActivity). Without it, any silent command (composer, wp-cli) was marked finished after 30 s.
+            // The job dies with this PowerShell process, so a crashed step still goes quiet and is caught.
+            $start = '$landoHb = Start-Job -ErrorAction SilentlyContinue -ArgumentList \''.$heartbeat.'\' -ScriptBlock '
+                .'{ param($f) while ($true) { Start-Sleep -Seconds 15; Add-Content -LiteralPath $f -Value (Get-Date -Format o) } }; ';
+            $stop = 'if ($landoHb) { Stop-Job $landoHb -ErrorAction SilentlyContinue; Remove-Job $landoHb -Force -ErrorAction SilentlyContinue }; '
+                ."Remove-Item -LiteralPath '{$heartbeat}' -ErrorAction SilentlyContinue; ";
+
+            return $this->powershellStepPrefix().$start."& { {$command} } *> '{$log}'; {$stop}Add-Content -Path '{$log}' -Value '{$marker}'";
         }
 
         $log = escapeshellarg($logFile);
 
-        return '('.$command.') > '.$log.' 2>&1';
+        return '('.$command.') > '.$log.' 2>&1; echo '.escapeshellarg($marker).' >> '.$log;
     }
 }

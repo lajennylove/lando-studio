@@ -7,6 +7,7 @@ use App\Models\RemoteSite;
 use App\Models\UserPreference;
 use App\Services\ApplicationDatabaseReset;
 use App\Services\DependencyChecker;
+use App\Services\OptimizedMode;
 use App\Services\PlatformDetector;
 use App\Support\LogContentUtf8;
 use Illuminate\Support\Str;
@@ -40,6 +41,11 @@ class Settings extends Component
     public array $redisVersions = [];
 
     public string $defaultCodePath = '';
+
+    public string $caCertPath = '';
+
+    /** Windows only: new sites keep WordPress core and plugins on Docker volumes. */
+    public bool $optimizedMode = false;
 
     // Lando update
     public bool $landoUpdating = false;
@@ -114,6 +120,21 @@ class Settings extends Component
         $this->defaultDbVersion = $defaults['db_version'] ?? config('lando_dev.defaults.db_version');
         $this->defaultRedisVersion = $defaults['redis_version'] ?? config('lando_dev.defaults.redis_version');
         $this->defaultCodePath = $defaults['code_path'] ?? config('lando_dev.defaults.code_path') ?? '~/code/sites/';
+        $this->caCertPath = $defaults['ca_cert_path'] ?? '';
+        $this->optimizedMode = ($defaults[OptimizedMode::KEY] ?? false) === true;
+    }
+
+    public function updatedOptimizedMode(): void
+    {
+        $this->persistDefaults();
+        $this->notifySuccess($this->optimizedMode
+            ? 'Optimized mode is on for new sites. Existing sites keep their current layout.'
+            : 'Optimized mode is off for new sites. Existing sites keep their current layout.');
+    }
+
+    public function getOptimizedModeAvailableProperty(): bool
+    {
+        return app(OptimizedMode::class)->isAvailable();
     }
 
     public function setAppearance(string $value): void
@@ -161,6 +182,26 @@ class Settings extends Component
         $this->notifySuccess('Default code path updated.');
     }
 
+    public function saveCaCertPath(): void
+    {
+        $path = trim($this->caCertPath);
+
+        if ($path !== '' && ! file_exists($path)) {
+            $this->addError('caCertPath', 'Certificate file not found at that path.');
+
+            return;
+        }
+
+        $this->caCertPath = $path;
+        $this->persistDefaults();
+
+        if ($path === '') {
+            $this->notifySuccess('CA certificate cleared.');
+        } else {
+            $this->notifySuccess('CA certificate path saved.');
+        }
+    }
+
     private function persistDefaults(): void
     {
         $path = storage_path('lando_studio_defaults.json');
@@ -169,6 +210,8 @@ class Settings extends Component
             'db_version' => $this->defaultDbVersion,
             'redis_version' => $this->defaultRedisVersion,
             'code_path' => $this->defaultCodePath,
+            'ca_cert_path' => $this->caCertPath,
+            OptimizedMode::KEY => $this->optimizedMode,
         ], JSON_PRETTY_PRINT));
     }
 
@@ -376,7 +419,7 @@ class Settings extends Component
 
         if ($platform->isWindows()) {
             $log = addslashes($this->landoUpdateLogFile);
-            $cmd = [...$platform->powershellArgs(), "& \"{$lando}\" update -y *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
+            $cmd = [...$platform->powershellArgs(), $platform->powershellStepPrefix()."& \"{$lando}\" update -y *> '{$log}'; Add-Content -Path '{$log}' -Value \"{$marker}\""];
         } else {
             $logArg = escapeshellarg($this->landoUpdateLogFile);
             $markerArg = escapeshellarg($marker);

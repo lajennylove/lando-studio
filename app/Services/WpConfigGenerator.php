@@ -16,6 +16,20 @@ final class WpConfigGenerator
 {
     private const SALT_URL = 'https://api.wordpress.org/secret-key/1.1/salt/';
 
+    /**
+     * Constants every cloned local site gets, as name => PHP literal. A clone must never update itself: the
+     * auto-update settings arrive with the production database, and a core update started by a page visit rewrote
+     * wp-admin over the Docker file share and was left half done (the site then answered 503).
+     *
+     * Used by the PHP generator below and by the `wp config set` calls after `lando wp config create`.
+     *
+     * @var array<string, string>
+     */
+    public const LOCAL_ONLY_CONSTANTS = [
+        'AUTOMATIC_UPDATER_DISABLED' => 'true',
+        'WP_AUTO_UPDATE_CORE' => 'false',
+    ];
+
     public function writeForClone(string $siteRoot, string $tablePrefix): void
     {
         if (! preg_match('/^[a-zA-Z0-9_]+$/', $tablePrefix)) {
@@ -47,6 +61,9 @@ final class WpConfigGenerator
         $dbHost = (string) config('lando_dev.defaults.db_host');
 
         $e = static fn (string $s): string => var_export($s, true);
+        $localOnly = collect(self::LOCAL_ONLY_CONSTANTS)
+            ->map(fn (string $value, string $name): string => "define( '{$name}', {$value} );")
+            ->implode("\n");
 
         $php = <<<PHP
 <?php
@@ -66,6 +83,9 @@ define( 'DB_COLLATE', '' );
 \$table_prefix = {$e($tablePrefix)};
 
 define( 'WP_DEBUG', false );
+
+// A local clone must never update itself (see WpConfigGenerator::LOCAL_ONLY_CONSTANTS).
+{$localOnly}
 
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );

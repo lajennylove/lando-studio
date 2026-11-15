@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Support\PersistentAppKey;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -11,7 +12,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Builds ship without APP_KEY. Use the key kept in the user's storage folder, so encrypted
+        // passwords survive rebuilds. Development keeps the key from .env.
+        if (blank(config('app.key'))) {
+            config(['app.key' => PersistentAppKey::resolve(storage_path('app-key'))]);
+        }
     }
 
     /**

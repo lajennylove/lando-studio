@@ -69,9 +69,19 @@ class SshService
         $localSql = escapeshellarg($localSqlPath);
 
         if ($this->platform->isWindows()) {
-            // cmd.exe: no pipefail; keep single pipe (Git Bash users may still get truncation).
-            return $sshpassSsh.' '.$target.' '.$remoteArg
-                .' | gzip > '.$localGz;
+            // On Windows, sshpass and gzip are unavailable. Delegate to a PHP artisan command
+            // that uses plink (PuTTY) for SSH and PHP's native GZipStream for compression.
+            // The command writes heartbeat lines to stdout every 20 s so the step log stays
+            // active during long dumps (WithCommandExecution treats 30 s of log inactivity as
+            // step complete). PowerShell's *> redirect streams native-command stdout to the log
+            // file in real-time — no explicit flush is needed.
+            $php = '"'.str_replace('"', '""', PHP_BINARY).'"';
+            $artisan = '"'.str_replace('"', '""', base_path('artisan')).'"';
+            $output = '"'.str_replace('"', '""', $localDumpPath).'"';
+
+            // & is the PowerShell call operator — without it, a quoted path like
+            // "C:\...\php.exe" is treated as a string expression, not a command.
+            return "& {$php} {$artisan} lando:mysqldump-ssh --remote-id={$remote->id} --output={$output}";
         }
 
         $trapCleanup = escapeshellarg('kill $LANDO_STUDIO_HB 2>/dev/null; wait $LANDO_STUDIO_HB 2>/dev/null');
@@ -101,8 +111,26 @@ class SshService
             .' && kill $LANDO_STUDIO_HB 2>/dev/null && wait $LANDO_STUDIO_HB 2>/dev/null && trap - EXIT';
     }
 
-    public function buildRsyncPluginsCommand(RemoteSite $remote, string $localPluginsPath): string
+    /**
+     * @param  string|null  $volumeContainer  Windows only: the appserver container whose wp-content/plugins is a Docker
+     *                                        volume. The sync then runs rsync inside it instead of pscp on the host, because the volume hides the host folder.
+     */
+    public function buildRsyncPluginsCommand(RemoteSite $remote, string $localPluginsPath, ?string $volumeContainer = null): string
     {
+        if ($this->platform->isWindows()) {
+            // rsync is unavailable on the Windows host. Delegate to a PHP artisan command that uses
+            // pscp (PuTTY SCP, bundled with plink) for recursive plugin download, or that runs rsync
+            // inside the container when the plugins folder is a volume.
+            $php = '"'.str_replace('"', '""', PHP_BINARY).'"';
+            $artisan = '"'.str_replace('"', '""', base_path('artisan')).'"';
+            $output = '"'.str_replace('"', '""', $localPluginsPath).'"';
+            $container = $volumeContainer !== null && $volumeContainer !== ''
+                ? ' --container='.preg_replace('/[^A-Za-z0-9_.-]/', '', $volumeContainer)
+                : '';
+
+            return "& {$php} {$artisan} lando:rsync-plugins --remote-id={$remote->id} --output={$output}{$container}";
+        }
+
         $remotePlugins = $this->remotePluginsDirectory($remote);
         $host = "{$remote->ssh_user}@{$remote->ssh_server_ip}";
         $remoteArg = escapeshellarg($remotePlugins);
@@ -130,6 +158,14 @@ class SshService
     public function buildHtaccessRewriteContent(string $remoteDomain): string
     {
         $remoteDomain = rtrim($remoteDomain, '/');
+
+        // Ensure HTTPS protocol so browsers don't block the redirect as mixed content
+        // when the local site is served over HTTPS (e.g. https://site.lndo.site).
+        if (! str_starts_with($remoteDomain, 'http://') && ! str_starts_with($remoteDomain, 'https://')) {
+            $remoteDomain = 'https://'.$remoteDomain;
+        } elseif (str_starts_with($remoteDomain, 'http://')) {
+            $remoteDomain = 'https://'.substr($remoteDomain, 7);
+        }
 
         return <<<HTACCESS
 # BEGIN WordPress
