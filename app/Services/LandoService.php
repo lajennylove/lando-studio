@@ -197,8 +197,20 @@ class LandoService
         return "cd {$escapedPath} && gzip -dc {$dumpArg} > dumpfile.sql && {$lando} db-import dumpfile.sql && rm -f dumpfile.sql";
     }
 
-    public function composerCreateProject(string $path, string $package, string $name): string
+    /**
+     * @param  bool  $themeOnVolumes  The theme's vendor and node_modules are Docker volumes, so the theme folder already
+     *                                exists with those two mount points and create-project would refuse it. The project is
+     *                                created in /tmp without installing, then copied in; the install step fills vendor.
+     */
+    public function composerCreateProject(string $path, string $package, string $name, bool $themeOnVolumes = false): string
     {
+        if ($themeOnVolumes) {
+            $tmp = '/tmp/'.preg_replace('/[^A-Za-z0-9_.-]/', '', $name);
+            $theme = '/app/wp/wp-content/themes/'.preg_replace('/[^A-Za-z0-9_.-]/', '', $name);
+
+            return $this->buildCommand($path, "ssh -c \"bash -c 'rm -rf {$tmp} && COMPOSER_PROCESS_TIMEOUT=0 composer create-project {$package} {$tmp} --no-install && mkdir -p {$theme} && cp -a {$tmp}/. {$theme}/ && rm -rf {$tmp}'\"");
+        }
+
         // Use ssh -c with bash -c so COMPOSER_PROCESS_TIMEOUT env var is set by the shell.
         // lando ssh -c execs directly (no shell), so we need bash to interpret the env var.
         return $this->buildCommand($path, "ssh -c \"bash -c 'COMPOSER_PROCESS_TIMEOUT=0 composer create-project {$package} {$name} --working-dir=/app/wp/wp-content/themes'\"");

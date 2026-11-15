@@ -7,6 +7,7 @@ use App\Models\RemoteSite;
 use App\Models\UserPreference;
 use App\Services\ApplicationDatabaseReset;
 use App\Services\DependencyChecker;
+use App\Services\OptimizedMode;
 use App\Services\PlatformDetector;
 use App\Support\LogContentUtf8;
 use Illuminate\Support\Str;
@@ -42,6 +43,9 @@ class Settings extends Component
     public string $defaultCodePath = '';
 
     public string $caCertPath = '';
+
+    /** Windows only: new sites keep WordPress core and plugins on Docker volumes. */
+    public bool $optimizedMode = false;
 
     // Lando update
     public bool $landoUpdating = false;
@@ -117,6 +121,20 @@ class Settings extends Component
         $this->defaultRedisVersion = $defaults['redis_version'] ?? config('lando_dev.defaults.redis_version');
         $this->defaultCodePath = $defaults['code_path'] ?? config('lando_dev.defaults.code_path') ?? '~/code/sites/';
         $this->caCertPath = $defaults['ca_cert_path'] ?? '';
+        $this->optimizedMode = ($defaults[OptimizedMode::KEY] ?? false) === true;
+    }
+
+    public function updatedOptimizedMode(): void
+    {
+        $this->persistDefaults();
+        $this->notifySuccess($this->optimizedMode
+            ? 'Optimized mode is on for new sites. Existing sites keep their current layout.'
+            : 'Optimized mode is off for new sites. Existing sites keep their current layout.');
+    }
+
+    public function getOptimizedModeAvailableProperty(): bool
+    {
+        return app(OptimizedMode::class)->isAvailable();
     }
 
     public function setAppearance(string $value): void
@@ -193,6 +211,7 @@ class Settings extends Component
             'redis_version' => $this->defaultRedisVersion,
             'code_path' => $this->defaultCodePath,
             'ca_cert_path' => $this->caCertPath,
+            OptimizedMode::KEY => $this->optimizedMode,
         ], JSON_PRETTY_PRINT));
     }
 

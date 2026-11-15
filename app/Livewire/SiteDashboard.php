@@ -7,6 +7,7 @@ use App\Livewire\Concerns\WithCommandExecution;
 use App\Livewire\Concerns\WithNotifications;
 use App\Models\RemoteSite;
 use App\Models\Site;
+use App\Services\DevPlugins;
 use App\Services\LandoService;
 use App\Services\LandoYamlGenerator;
 use App\Services\PlatformDetector;
@@ -97,6 +98,14 @@ class SiteDashboard extends Component
 
     /** Steps cached for WithCommandExecution retry. */
     private ?array $cachedSyncSteps = null;
+
+    // Development plugins (optimized mode)
+    /** @var list<string>|null Plugin folders served by the container; null until loaded or while it is unreachable. */
+    public ?array $installedPlugins = null;
+
+    public string $newDevPluginName = '';
+
+    public string $newDevPluginRepo = '';
 
     public function mount(Site $site): void
     {
@@ -241,6 +250,109 @@ class SiteDashboard extends Component
             return;
         }
         $this->runAction('Rebuilding', app(LandoService::class)->rebuild($this->site->path));
+    }
+
+    // ── Development plugins (optimized mode) ────────────────────────────────
+
+    /** Whether this site keeps core and plugins on Docker volumes. Read from its .lando.yml, the source of truth. */
+    public function getIsOptimizedProperty(): bool
+    {
+        return ! $this->isProjectMissingOnDisk() && LandoYamlGenerator::siteUsesVolumes($this->site->path);
+    }
+
+    /** @return list<string> */
+    public function getDevPluginsProperty(): array
+    {
+        return LandoYamlGenerator::devPluginsFor($this->site->path);
+    }
+
+    /** Plugin names to list: everything the container serves plus the ones mounted from disk. @return list<string> */
+    public function getPluginRowsProperty(): array
+    {
+        $rows = array_unique([...($this->installedPlugins ?? []), ...$this->devPlugins]);
+        sort($rows, SORT_NATURAL | SORT_FLAG_CASE);
+
+        return array_values($rows);
+    }
+
+    public function loadPlugins(): void
+    {
+        if (! $this->isOptimized) {
+            return;
+        }
+
+        $this->installedPlugins = app(DevPlugins::class)->installed($this->site->name);
+    }
+
+    public function toggleDevPlugin(string $plugin): void
+    {
+        if (! $this->canChangeDevPlugins($plugin)) {
+            return;
+        }
+
+        $plugins = app(DevPlugins::class);
+
+        if (in_array($plugin, $this->devPlugins, true)) {
+            $this->runAction('Unmounting plugin', $plugins->disableCommand($this->site->name, $this->site->path, $plugin));
+        } else {
+            $this->runAction('Mounting plugin', $plugins->enableCommand($this->site->name, $this->site->path, $plugin));
+        }
+    }
+
+    public function addDevPlugin(): void
+    {
+        $name = trim($this->newDevPluginName);
+        $repo = trim($this->newDevPluginRepo);
+
+        if ($repo !== '' && ! DevPlugins::isValidRepoUrl($repo)) {
+            $this->addError('newDevPluginRepo', 'Use an https:// or git@ repository address.');
+
+            return;
+        }
+
+        if ($name === '' && $repo !== '') {
+            $name = preg_replace('/\.git$/', '', basename(rtrim($repo, '/'))) ?? '';
+            $name = (string) preg_replace('/^.*:/', '', $name);
+        }
+
+        if (! LandoYamlGenerator::isValidPluginName($name)) {
+            $this->addError('newDevPluginName', 'Use letters, digits, dot, dash and underscore.');
+
+            return;
+        }
+
+        if (! $this->canChangeDevPlugins($name)) {
+            return;
+        }
+
+        $this->resetErrorBag(['newDevPluginName', 'newDevPluginRepo']);
+        $this->newDevPluginName = '';
+        $this->newDevPluginRepo = '';
+
+        $this->runAction('Mounting plugin', app(DevPlugins::class)->createCommand($this->site->name, $this->site->path, $name, $repo));
+    }
+
+    private function canChangeDevPlugins(string $plugin): bool
+    {
+        if (! $this->isOptimized) {
+            $this->notifyError('Development plugins need a site in optimized mode.');
+
+            return false;
+        }
+
+        if ($this->actionRunning || $this->isExecuting) {
+            $this->notifyError('Wait for the current action to finish.');
+
+            return false;
+        }
+
+        if (! LandoYamlGenerator::isValidPluginName($plugin)) {
+            $this->notifyError('That is not a valid plugin folder name.');
+
+            return false;
+        }
+
+        return true;
     }
 
     public function confirmDestroy(): void
@@ -672,17 +784,26 @@ class SiteDashboard extends Component
             $this->actionLabel = '';
             $this->actionStartedAt = null;
 
-            $newStatus = match ($completedAction) {
-                'Stopping' => SiteStatus::Stopped,
-                'Starting', 'Restarting', 'Rebuilding' => SiteStatus::Running,
+            $failedPluginMove = in_array($completedAction, ['Mounting plugin', 'Unmounting plugin'], true)
+                && str_contains($content, '[Lando Studio ERROR]');
+
+            $newStatus = match (true) {
+                $failedPluginMove => $this->site->status,
+                $completedAction === 'Stopping' => SiteStatus::Stopped,
+                in_array($completedAction, ['Starting', 'Restarting', 'Rebuilding', 'Mounting plugin', 'Unmounting plugin'], true) => SiteStatus::Running,
                 default => $this->site->status,
             };
             $this->site->update(['status' => $newStatus]);
             $this->site->refresh();
 
             $this->dispatch('site-status-changed')->to(SiteList::class);
-            $this->notifySuccess("{$completedAction} completed.");
+            if ($failedPluginMove) {
+                $this->notifyError("{$completedAction} failed. Check the output below.");
+            } else {
+                $this->notifySuccess("{$completedAction} completed.");
+            }
             $this->refreshSiteInfo();
+            $this->loadPlugins();
         }
     }
 

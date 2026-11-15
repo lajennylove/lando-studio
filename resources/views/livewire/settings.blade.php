@@ -117,6 +117,24 @@
         </div>
     </div>
 
+    {{-- Optimized mode (Windows) --}}
+    @if($this->optimizedModeAvailable)
+        <div class="mt-10">
+            <flux:heading size="lg">Performance</flux:heading>
+            <flux:subheading class="mt-1">
+                Docker Desktop shares your files with containers over a slow connection on some Windows machines.
+            </flux:subheading>
+
+            <div class="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-700 px-4 py-3">
+                <flux:switch
+                    wire:model.live="optimizedMode"
+                    label="Optimized mode"
+                    description="Turn this on for slow machines. New and cloned sites keep WordPress core and plugins inside Docker instead of on your disk, which makes them much faster. Plugins you develop can be mounted from your disk on each site's page. Turn it off to keep everything on your disk, as before. Sites that already exist keep the layout they were created with."
+                />
+            </div>
+        </div>
+    @endif
+
     {{-- Network / TLS Certificate --}}
     <div class="mt-10">
         <flux:heading size="lg">Network</flux:heading>

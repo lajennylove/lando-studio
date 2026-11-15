@@ -179,20 +179,30 @@ class SiteManager
             ];
         }
 
-        $steps = array_merge($steps, [
-            [
-                'label' => 'Starting Lando environment',
-                'command' => $this->lando->start($path),
+        $steps[] = [
+            'label' => 'Starting Lando environment',
+            'command' => $this->lando->start($path),
+            'step' => count($steps) + 1,
+        ];
+
+        $usesVolumes = $platform->isWindows() && LandoYamlGenerator::siteUsesVolumes($path);
+        if ($usesVolumes) {
+            $steps[] = [
+                'label' => 'Preparing project volumes',
+                'command' => $this->prepareVolumesCommand($name, $path),
                 'step' => count($steps) + 1,
-            ],
+            ];
+        }
+
+        $steps = array_merge($steps, [
             [
                 'label' => 'Downloading WordPress core',
                 'command' => $this->lando->wpCoreDownload($path),
-                'step' => count($steps) + 2,
+                'step' => count($steps) + 1,
             ],
             [
                 'label' => 'Verifying WordPress core files',
-                'command' => $this->wpCoreCheckCommand($path),
+                'command' => $usesVolumes ? $this->wpCoreCheckInContainerCommand($name) : $this->wpCoreCheckCommand($path),
                 'step' => count($steps) + 3,
             ],
             [
@@ -214,7 +224,7 @@ class SiteManager
         return array_merge($steps, [
             [
                 'label' => 'Creating Sage theme',
-                'command' => $this->lando->composerCreateProject($path, 'roots/sage', $name),
+                'command' => $this->lando->composerCreateProject($path, 'roots/sage', $name, $usesVolumes),
                 'step' => 5,
             ],
             [
@@ -317,6 +327,15 @@ class SiteManager
             'step' => count($steps) + 1,
         ];
 
+        $usesVolumes = $platform->isWindows() && LandoYamlGenerator::siteUsesVolumes($path);
+        if ($usesVolumes) {
+            $steps[] = [
+                'label' => 'Preparing project volumes',
+                'command' => $this->prepareVolumesCommand($name, $path),
+                'step' => count($steps) + 1,
+            ];
+        }
+
         // On Windows, Docker Desktop may silently skip build_as_root curl steps,
         // leaving WP-CLI missing. Explicitly install it into the running container.
         $ensureWpCli = $this->lando->ensureWpCli($path);
@@ -339,7 +358,11 @@ class SiteManager
             // plugins, this keeps the order safe for anything that does load them).
             [
                 'label' => 'Syncing plugins from remote',
-                'command' => $this->ssh->buildRsyncPluginsCommand($remoteSite, $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'plugins'),
+                'command' => $this->ssh->buildRsyncPluginsCommand(
+                    $remoteSite,
+                    $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'plugins',
+                    $usesVolumes ? "{$name}_appserver_1" : null,
+                ),
                 'step' => count($steps) + 2,
             ],
             [
@@ -586,6 +609,37 @@ class SiteManager
             .'echo "WordPress core files did not finish downloading"; exit 1';
     }
 
+    /**
+     * Gives the volumes (created empty and owned by root) to www-data, which runs WP-CLI, composer and apache.
+     * Runs through docker exec as root; the build step in .lando.yml does the same but Docker Desktop on Windows can
+     * skip build steps, and nothing may write to a volume before this has run.
+     */
+    private function prepareVolumesCommand(string $name, string $path): string
+    {
+        $targets = implode(' ', LandoYamlGenerator::volumeTargetsFor($path));
+        $container = preg_replace('/[^A-Za-z0-9_.-]/', '', $name).'_appserver_1';
+
+        return "docker exec -u root {$container} sh -c \"chown -R www-data:www-data {$targets}\"; "
+            .'if ($LASTEXITCODE -ne 0) { throw \'Could not prepare the project volumes\' }; '
+            ."Write-Host 'Project volumes ready.'";
+    }
+
+    /**
+     * Same wait as wpCoreCheckCommand, for a site whose core folders are volumes: the host folder is empty then, so
+     * the files are looked for inside the container.
+     */
+    private function wpCoreCheckInContainerCommand(string $name): string
+    {
+        $container = preg_replace('/[^A-Za-z0-9_.-]/', '', $name).'_appserver_1';
+
+        return '$ok = $false; for ($i = 0; $i -lt 60; $i++) { '
+            ."docker exec {$container} sh -c \"test -f /app/wp/wp-includes/compat.php && test -d /app/wp/wp-admin\" 2>\$null; "
+            .'if ($LASTEXITCODE -eq 0) { $ok = $true; break }; '
+            .'Write-Host "Waiting for WordPress core files"; Start-Sleep -Seconds 5 }; '
+            .'if (-not $ok) { throw \'WordPress core files did not finish downloading\' }; '
+            .'Write-Host "WordPress core files OK"';
+    }
+
     private function gitCloneCommand(string $path, string $repoUrl, string $themeName, Site $site): string
     {
         $credentialFile = GitCredentials::fileFor('site-'.$site->id);
@@ -604,6 +658,9 @@ class SiteManager
             // folder that is not a git repository is never touched.
             return "Set-Location \"{$themesDir}\"; {$login}\$env:GIT_TERMINAL_PROMPT='0'; "
                 ."if (Test-Path -LiteralPath '{$name}\\.git') { Write-Host 'Theme folder already exists, fetching its latest commits instead of cloning.'; Set-Location '{$name}'; git fetch --progress origin; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme fetched.' } } "
+                // A theme folder that only holds the empty mount points of the vendor and node_modules volumes (Docker
+                // creates them on the host when the container starts) is turned into a checkout in place.
+                ."elseif ((Test-Path -LiteralPath '{$name}') -and -not (Get-ChildItem -Force -LiteralPath '{$name}' | Where-Object { \$_.Name -notin 'vendor', 'node_modules' })) { Write-Host 'Theme folder only holds volume mount points, fetching the repository into it.'; Set-Location '{$name}'; git init -q; git remote add origin '".str_replace("'", "''", $repoUrl)."'; git fetch --progress origin; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme fetched.' } } "
                 ."elseif ((Test-Path -LiteralPath '{$name}') -and ((Get-ChildItem -Force -LiteralPath '{$name}' | Measure-Object).Count -gt 0)) { Write-Host '[Lando Studio ERROR] The theme folder already exists and is not a git repository, so it was not touched. Remove it or use another site name.'; \$code = 1 } "
                 ."else { git clone --progress {$repoUrl} {$themeName}; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme cloned successfully.' } }"
                 ."{$cleanup}; if (\$code -ne 0) { throw 'git clone failed' }";

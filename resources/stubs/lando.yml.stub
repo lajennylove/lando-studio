@@ -12,7 +12,7 @@ services:
   appserver:
     db_client: false
 {{CA_CERT_OVERRIDES}}    build_as_root:
-{{CA_CERT_BUILD_STEPS}}      - apt-get update -y && apt-get install -y vim openssh-client curl sshpass
+{{CA_CERT_BUILD_STEPS}}{{VOLUME_BUILD_STEPS}}      - apt-get update -y && apt-get install -y vim openssh-client curl sshpass
       - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
       - apt-get install -y nodejs
       - npm install -g yarn
@@ -59,3 +59,4 @@ tooling:
     description: Run Yarn to build theme assets
     user: root
     cmd: bash -c "cd /app/wp/wp-content/themes/{{THEME_SLUG}} && yarn build"
+{{TOP_LEVEL_VOLUMES}}
