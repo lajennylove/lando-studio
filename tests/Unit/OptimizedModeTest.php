@@ -7,6 +7,7 @@ namespace Tests\Unit;
 use App\Services\OptimizedMode;
 use App\Services\PlatformDetector;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Tests\TestCase;
 
 class OptimizedModeTest extends TestCase
@@ -49,6 +50,7 @@ class OptimizedModeTest extends TestCase
         $this->assertFalse($this->mode(true)->enabledForNewSites());
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_it_follows_the_saved_toggle_on_windows(): void
     {
         file_put_contents($this->file, json_encode(['optimized_mode' => true]));

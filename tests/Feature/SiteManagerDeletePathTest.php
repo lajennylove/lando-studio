@@ -8,6 +8,7 @@ use App\Models\Site;
 use App\Services\PlatformDetector;
 use App\Services\SiteManager;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use Tests\TestCase;
 
 class SiteManagerDeletePathTest extends TestCase
@@ -20,6 +21,7 @@ class SiteManagerDeletePathTest extends TestCase
         $this->app->instance(PlatformDetector::class, $platform);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_linux_delete_retries_through_pkexec_when_root_owned_files_remain(): void
     {
         $this->useOs('linux');
@@ -33,6 +35,7 @@ class SiteManagerDeletePathTest extends TestCase
         );
     }
 
+    #[RequiresOperatingSystemFamily('Darwin')]
     public function test_macos_delete_is_a_plain_rm_without_pkexec(): void
     {
         $this->useOs('macos');
@@ -41,6 +44,7 @@ class SiteManagerDeletePathTest extends TestCase
         $this->assertSame("rm -rf '/Users/dev/code/sites/test'", app(SiteManager::class)->getDeletePath($site));
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_windows_delete_leaves_the_site_folder_before_removing_it_and_checks_the_result(): void
     {
         $platform = Mockery::mock(PlatformDetector::class);
@@ -61,6 +65,7 @@ class SiteManagerDeletePathTest extends TestCase
         $this->assertStringContainsString('could not be removed', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_windows_delete_retries_and_falls_back_to_the_long_path_form(): void
     {
         $platform = Mockery::mock(PlatformDetector::class);
@@ -76,6 +81,7 @@ class SiteManagerDeletePathTest extends TestCase
         $this->assertStringContainsString("'C:\\Users\\dev\\code\\sites\\it''s'", $command, 'a quote in the path must be doubled inside the PowerShell literal');
     }
 
+    #[RequiresOperatingSystemFamily('!Windows')]
     public function test_delete_path_with_a_quote_is_escaped(): void
     {
         $this->useOs('linux');

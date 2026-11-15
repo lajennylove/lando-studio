@@ -7,6 +7,7 @@ namespace Tests\Unit;
 use App\Services\DependencyChecker;
 use App\Services\PlatformDetector;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use PHPUnit\Framework\TestCase;
 
 class DependencyCheckerTest extends TestCase
@@ -69,6 +70,7 @@ class DependencyCheckerTest extends TestCase
         $this->assertTrue($this->checkerWithHome()->isLandoSetupComplete());
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_all_required_is_false_on_linux_when_sshpass_is_missing(): void
     {
         $platform = Mockery::mock(PlatformDetector::class);

@@ -9,6 +9,7 @@ use App\Services\PlatformDetector;
 use App\Services\SiteManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
+use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use ReflectionMethod;
 use Tests\TestCase;
 
@@ -27,6 +28,7 @@ class SiteManagerGitCommandsTest extends TestCase
         return $reflection->invokeArgs(app(SiteManager::class), $args);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_theme_clone_on_linux_fails_fast_when_git_needs_a_login(): void
     {
         $command = $this->commandFrom('gitCloneCommand', ['/home/dev/code/sites/betus', 'https://example.test/repo/', 'locker-room', new Site(['id' => 1])], 'linux');
@@ -34,6 +36,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString('GIT_TERMINAL_PROMPT=0 git clone', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_theme_clone_on_windows_disables_the_git_prompt(): void
     {
         $command = $this->commandFrom('gitCloneCommand', ['C:\\sites\\betus', 'https://example.test/repo/', 'locker-room', new Site(['id' => 1])], 'windows');
@@ -50,6 +53,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString('else echo "Branch main not found', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_checkout_fast_forwards_to_the_fetched_remote_branch_on_linux(): void
     {
         $command = $this->commandFrom('gitCheckoutCommand', ['/home/dev/theme', 'main'], 'linux');
@@ -59,6 +63,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString('[Lando Studio ERROR] Branch main could not be fast-forwarded', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_checkout_fast_forwards_to_the_fetched_remote_branch_on_windows(): void
     {
         $command = $this->commandFrom('gitCheckoutCommand', ['C:\\theme', 'main'], 'windows');
@@ -69,6 +74,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertGreaterThan(strpos($command, 'if ($LASTEXITCODE -ne 0)'), strpos($command, 'git merge'));
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_theme_clone_fetches_instead_of_cloning_when_the_folder_already_has_a_repo_on_linux(): void
     {
         $command = $this->commandFrom('gitCloneCommand', ['/home/dev/code/sites/betus', 'https://example.test/repo/', 'locker-room', new Site(['id' => 1])], 'linux');
@@ -78,6 +84,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString('GIT_TERMINAL_PROMPT=0 git fetch', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_theme_clone_refuses_a_non_empty_folder_that_is_not_a_repo_on_linux(): void
     {
         $command = $this->commandFrom('gitCloneCommand', ['/home/dev/code/sites/betus', 'https://example.test/repo/', 'locker-room', new Site(['id' => 1])], 'linux');
@@ -85,6 +92,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString('[Lando Studio ERROR] The theme folder already exists and is not a git repository', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_theme_clone_fetches_or_refuses_an_existing_folder_on_windows(): void
     {
         $command = $this->commandFrom('gitCloneCommand', ['C:\\sites\\betus', 'https://example.test/repo/', 'locker-room', new Site(['id' => 1])], 'windows');
@@ -95,6 +103,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString("throw 'git clone failed'", $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_dev_checkout_on_windows_does_not_fail_when_the_branch_is_missing(): void
     {
         $command = $this->commandFrom('gitCheckoutCommand', ['C:\\theme', 'main'], 'windows');
@@ -123,6 +132,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString('git checkout '.escapeshellarg('release/2026.1'), $command);
     }
 
+    #[RequiresOperatingSystemFamily('Windows')]
     public function test_wordpress_core_check_fails_when_the_files_are_missing_on_windows(): void
     {
         $command = $this->commandFrom('wpCoreCheckCommand', ['C:\\sites\\test'], 'windows');
@@ -132,6 +142,7 @@ class SiteManagerGitCommandsTest extends TestCase
         $this->assertStringContainsString('throw', $command);
     }
 
+    #[RequiresOperatingSystemFamily('Linux')]
     public function test_wordpress_core_check_fails_when_the_files_are_missing_on_linux(): void
     {
         $command = $this->commandFrom('wpCoreCheckCommand', ['/home/dev/code/sites/test'], 'linux');
