@@ -27,6 +27,9 @@ trait WithCommandExecution
     /** How many times one run may move the database port after Docker refuses it. */
     private const MAX_PORT_RETRIES = 5;
 
+    /** Longest a single step may run while it still shows signs of life, before it is treated as hung. */
+    private const MAX_STEP_SECONDS = 21_600;
+
     public int $currentStep = 0;
 
     public int $totalSteps = 0;
@@ -62,7 +65,6 @@ trait WithCommandExecution
             'label' => $s['label'],
             'hint' => $s['hint'] ?? null,
             'group' => $s['group'] ?? null,
-            'timeout' => $s['timeout'] ?? 600,
             'inactivity_timeout' => $s['inactivity_timeout'] ?? 30,
             'status' => 'pending',
             'output' => '',
@@ -210,11 +212,11 @@ trait WithCommandExecution
             return;
         }
 
-        // ── 2. Overall timeout — safety net for truly stuck processes ────────
-        $stepTimeout = $this->steps[$this->currentStep]['timeout'] ?? 600;
-        if ($elapsed > $stepTimeout) {
-            $timeoutMinutes = (int) round($stepTimeout / 60);
-            $this->failCurrentStep($site, "Command timed out after {$timeoutMinutes} minutes.");
+        // ── 2. Backstop — a step that is still alive is never cut off for being slow ──
+        // A large database or a big theme build can run for an hour on Windows. Liveness is judged by the log and
+        // heartbeat activity below, so this only catches a process that is hung while still looking alive.
+        if ($elapsed > self::MAX_STEP_SECONDS) {
+            $this->failCurrentStep($site, 'Command ran for over '.(self::MAX_STEP_SECONDS / 3600).' hours without finishing. Check the step log, then retry.');
 
             return;
         }

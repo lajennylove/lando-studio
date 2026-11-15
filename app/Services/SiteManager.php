@@ -221,21 +221,18 @@ class SiteManager
                 'label' => 'Installing Composer dependencies',
                 'command' => $this->lando->composerInstall($path, "wp/wp-content/themes/{$name}"),
                 'step' => 6,
-                'timeout' => 1800,
                 'inactivity_timeout' => 120,
             ],
             [
                 'label' => 'Installing Yarn dependencies',
                 'command' => $this->lando->yarn($path, "wp/wp-content/themes/{$name}"),
                 'step' => 7,
-                'timeout' => 600,
                 'inactivity_timeout' => 120,
             ],
             [
                 'label' => 'Building theme assets',
                 'command' => $this->lando->yarn($path, "wp/wp-content/themes/{$name}", 'build'),
                 'step' => 8,
-                'timeout' => 600,
                 'inactivity_timeout' => 120,
             ],
             [
@@ -343,14 +340,12 @@ class SiteManager
             [
                 'label' => 'Syncing plugins from remote',
                 'command' => $this->ssh->buildRsyncPluginsCommand($remoteSite, $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'plugins'),
-                'timeout' => 1800,
                 'step' => count($steps) + 2,
             ],
             [
                 'label' => 'Dumping remote database',
                 'group' => 'Database Setup',
                 'hint' => 'Streams SQL over SSH then compresses locally — nothing is written on the remote server. Expect 2–10 minutes depending on database size.',
-                'timeout' => 1200,
                 'command' => $this->ssh->buildMysqldumpCommand($remoteSite, $dumpFile),
                 'step' => count($steps) + 2,
             ],
@@ -364,7 +359,6 @@ class SiteManager
                 'label' => 'Importing database',
                 'group' => 'Database Setup',
                 'command' => $this->lando->dbImport($path, 'dumpfile.sql.gz'),
-                'timeout' => 1200,
                 'step' => count($steps) + 4,
             ],
             [
@@ -383,8 +377,6 @@ class SiteManager
                 'label' => 'Replacing domain references',
                 'group' => 'Database Setup',
                 'hint' => 'Search-Replace prod-url for localdev-url. Large databases can take 30 minutes or more.',
-                // WP-CLI scans every column of every table; a 4 GB database took over 24 minutes on Windows.
-                'timeout' => 3600,
                 'command' => $this->lando->wpSearchReplaceImported($path, "https://{$name}.lndo.site", $remoteSite->theme_name ?: null),
                 'step' => 8,
             ],
@@ -439,7 +431,6 @@ class SiteManager
                 'label' => 'Installing Composer dependencies',
                 'command' => $this->lando->composerInstall($path, $themeSubdir),
                 'step' => $stepNum++,
-                'timeout' => 1800,
                 'inactivity_timeout' => 120,
             ];
         }
@@ -449,7 +440,6 @@ class SiteManager
                 'label' => 'Installing Node dependencies',
                 'command' => $this->lando->yarn($path, $themeSubdir),
                 'step' => $stepNum++,
-                'timeout' => 600,
                 'inactivity_timeout' => 120,
             ];
         }
@@ -460,7 +450,6 @@ class SiteManager
                 ? $this->lando->yarn($path, $themeSubdir, 'build')
                 : 'echo "No theme configured, skipping build"',
             'step' => $stepNum++,
-            'timeout' => 600,
             'inactivity_timeout' => 120,
         ];
 
@@ -772,7 +761,6 @@ class SiteManager
             [
                 'label' => 'Dumping remote database',
                 'hint' => 'Streams SQL over SSH then compresses locally — nothing is written on the remote server. Expect 2–10 minutes depending on database size.',
-                'timeout' => 1200,
                 'command' => $this->ssh->buildMysqldumpCommand($remoteSite, $dumpFile),
                 'step' => 1,
             ],
@@ -784,7 +772,6 @@ class SiteManager
             [
                 'label' => 'Importing database',
                 'command' => $this->lando->dbImport($path, 'dumpfile.sql.gz'),
-                'timeout' => 1200,
                 'step' => 3,
             ],
             [
@@ -800,15 +787,12 @@ class SiteManager
             [
                 'label' => 'Replacing domain references',
                 'hint' => 'Search-replace prod URL → local URL. Large databases can take 30 minutes or more.',
-                // WP-CLI scans every column of every table; a 4 GB database took over 24 minutes on Windows.
-                'timeout' => 3600,
                 'command' => $this->lando->wpSearchReplaceImported($path, $localUrl, $localTheme),
                 'step' => 6,
             ],
             [
                 'label' => 'Rebuilding Lando environment',
                 'hint' => 'Runs `lando rebuild -y` to apply all database and config changes.',
-                'timeout' => 600,
                 'command' => $this->lando->rebuild($path),
                 'step' => 7,
             ],
