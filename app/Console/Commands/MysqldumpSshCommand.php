@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Models\RemoteSite;
 use App\Services\DependencyChecker;
+use App\Support\PuttyHostKey;
 use Illuminate\Console\Command;
 
 /**
@@ -72,6 +73,7 @@ class MysqldumpSshCommand extends Command
         $cmd = [
             $plinkPath,
             '-batch',
+            ...PuttyHostKey::argumentsFor($plinkPath, $target),
             '-pw', (string) $remote->ssh_password,
             '-T',
             $target,

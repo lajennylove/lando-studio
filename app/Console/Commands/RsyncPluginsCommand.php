@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Models\RemoteSite;
 use App\Services\DependencyChecker;
+use App\Support\PuttyHostKey;
 use Illuminate\Console\Command;
 
 /**
@@ -70,6 +71,7 @@ class RsyncPluginsCommand extends Command
         $cmd = [
             $pscpPath,
             '-batch',
+            ...PuttyHostKey::argumentsFor($plinkPath, $host),
             '-scp',  // force SCP protocol — SFTP mode fails on absolute paths
             '-pw', (string) $remote->ssh_password,
             '-r',  // recursive

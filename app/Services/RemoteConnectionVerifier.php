@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\RemoteSite;
+use App\Support\PuttyHostKey;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 
@@ -68,14 +69,12 @@ final class RemoteConnectionVerifier
                 );
             }
 
-            // Plink prompts for host-key acceptance on first connect. On Windows
-            // it reads the prompt from the console (CONIN$), NOT from stdin pipes,
-            // so Symfony Process::input() cannot answer it. Wrapping in PowerShell
-            // with "echo y |" properly pipes through the shell. When the key is
-            // already cached the "y" is harmlessly ignored.
+            // Plink asks about an unknown host key on the console, not on stdin, so piping "y" hangs. Read the
+            // fingerprint in batch mode and pass it back with -hostkey instead.
+            $hostKey = PuttyHostKey::argumentsFor($plinkPath, $target);
             $sshProbe = Process::timeout(30)
                 ->env(['LANDO_STUDIO_SSH_PW' => $sshPass])
-                ->run($this->plinkViaPowerShell($plinkPath, $target, 'echo LANDO_STUDIO_SSH_OK'));
+                ->run($this->plinkViaPowerShell($plinkPath, $target, 'echo LANDO_STUDIO_SSH_OK', $hostKey));
         } else {
             $sshProbe = Process::env(['SSHPASS' => $sshPass])
                 ->timeout(30)
@@ -125,7 +124,7 @@ final class RemoteConnectionVerifier
             );
             $schemaProbe = Process::timeout(90)
                 ->env(['LANDO_STUDIO_SSH_PW' => $sshPass])
-                ->run($this->plinkViaPowerShell($plinkPath, $target, $dbCmd));
+                ->run($this->plinkViaPowerShell($plinkPath, $target, $dbCmd, $hostKey));
         } else {
             $schemaProbe = Process::env(['SSHPASS' => $sshPass])
                 ->timeout(90)
@@ -180,20 +179,23 @@ final class RemoteConnectionVerifier
     }
 
     /**
-     * Build a PowerShell command array that pipes "y" into plink to auto-accept
-     * host-key prompts. Returns an array suitable for Process::run().
+     * Build a PowerShell command array that runs plink in batch mode (never waits for input), with the host key
+     * accepted through `-hostkey`. Returns an array suitable for Process::run().
      *
+     * @param  list<string>  $hostKeyArgs  From {@see PuttyHostKey::argumentsFor()}
      * @return list<string>
      */
-    private function plinkViaPowerShell(string $plinkPath, string $target, string $remoteCmd): array
+    private function plinkViaPowerShell(string $plinkPath, string $target, string $remoteCmd, array $hostKeyArgs = []): array
     {
         $esc = static fn (string $v): string => str_replace("'", "''", $v);
+        $hostKey = $hostKeyArgs === [] ? '' : sprintf("-hostkey '%s' ", $esc($hostKeyArgs[1]));
 
         // The password is not in this string. The caller passes it as LANDO_STUDIO_SSH_PW, and PowerShell reads it
         // from there. Passing it inline lets cmd.exe rewrite characters such as ! % ^ before plink sees them.
         $ps = sprintf(
-            "echo y | & '%s' -ssh -pw \$env:LANDO_STUDIO_SSH_PW -T '%s' '%s'",
+            "& '%s' -batch %s-ssh -pw \$env:LANDO_STUDIO_SSH_PW -T '%s' '%s'",
             $esc($plinkPath),
+            $hostKey,
             $esc($target),
             $esc($remoteCmd),
         );

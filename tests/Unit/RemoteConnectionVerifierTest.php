@@ -27,6 +27,25 @@ class RemoteConnectionVerifierTest extends TestCase
         }));
     }
 
+    /**
+     * Answers the SSH probe, then the schema probe. The Windows host-key lookup (plink -batch, no password) gets
+     * an empty result, which means "key already cached".
+     */
+    private function fakeProbes(string $sshOutput, string $schemaOutput): void
+    {
+        $answers = [$sshOutput, $schemaOutput];
+
+        Process::fake(function ($process) use (&$answers) {
+            $command = is_array($process->command) ? $process->command : [];
+
+            if (in_array('-batch', $command, true)) {
+                return Process::result(output: '');
+            }
+
+            return Process::result(output: (string) array_shift($answers));
+        });
+    }
+
     public function test_succeeds_when_ssh_and_schema_dump_ok(): void
     {
         $remote = RemoteSite::query()->create([
@@ -42,11 +61,7 @@ class RemoteConnectionVerifierTest extends TestCase
             'repo_url' => null,
         ]);
 
-        Process::fake([
-            '*' => Process::sequence()
-                ->push(Process::result(output: 'LANDO_STUDIO_SSH_OK'))
-                ->push(Process::result(output: "-- MariaDB dump 10.6\n")),
-        ]);
+        $this->fakeProbes('LANDO_STUDIO_SSH_OK', "-- MariaDB dump 10.6\n");
 
         $r = app(RemoteConnectionVerifier::class)->verify($remote);
 
@@ -93,11 +108,7 @@ class RemoteConnectionVerifierTest extends TestCase
             'repo_url' => null,
         ]);
 
-        Process::fake([
-            '*' => Process::sequence()
-                ->push(Process::result(output: 'LANDO_STUDIO_SSH_OK'))
-                ->push(Process::result(output: 'ERROR 1045 (28000): Access denied for user')),
-        ]);
+        $this->fakeProbes('LANDO_STUDIO_SSH_OK', 'ERROR 1045 (28000): Access denied for user');
 
         $r = app(RemoteConnectionVerifier::class)->verify($remote);
 
