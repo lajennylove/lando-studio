@@ -261,7 +261,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Lando-Studio-${{ needs.prepare.outputs.version }}-macos-${{ matrix.arch }}
-          path: dist/
+          path: |
+            dist/*.dmg
           if-no-files-found: error
           retention-days: 7
 
@@ -339,8 +340,8 @@ jobs:
 
       - name: Find build output
         run: |
-          echo "=== Searching for .AppImage / .deb / .rpm files ==="
-          find . \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) 2>/dev/null | grep -v node_modules | grep -v vendor || true
+          echo "=== Searching for .AppImage / .deb files ==="
+          find . \( -name "*.AppImage" -o -name "*.deb" \) 2>/dev/null | grep -v node_modules | grep -v vendor || true
           echo "=== dist/ contents ==="
           ls -lh dist/ 2>/dev/null || echo "dist/ does not exist"
 
@@ -348,7 +349,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Lando-Studio-${{ needs.prepare.outputs.version }}-linux-x64
-          path: dist/
+          path: |
+            dist/*.AppImage
+            dist/*.deb
           if-no-files-found: error
           retention-days: 7
 
@@ -465,7 +468,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Lando-Studio-${{ needs.prepare.outputs.version }}-windows-x64
-          path: dist/
+          path: |
+            dist/*.exe
           if-no-files-found: error
           retention-days: 7
 
