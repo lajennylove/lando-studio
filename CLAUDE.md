@@ -168,3 +168,16 @@ Host PHP (the NativePHP/Electron runtime) is separate from the PHP inside Lando 
 - **First-run tests start from scratch.** Never pre-install anything on a test machine that the app is supposed to install: Lando, Docker or OrbStack, WSL2, PuTTY, Lando plugins, PHP, or Composer. The app's first-run flow installs them, and a test is only valid if it does. Before a run, verify the clean state with read-only checks, and if something is already present, remove it using the documented uninstall path, not by hand. Only the built app is copied to a test machine.
 - **Test machine access** (Windows dual-boot laptop and Omarchy Linux laptop: addresses, users, keys, host fingerprints, paths) is in the Obsidian note `Projects/Lando Studio/Test Machines Access.md`. It is private and is not kept in the repo. Never put addresses, passwords, or tokens in committed files; the DevOps and CloudWays tokens stay in the git-ignored `storage/devops-token` and `storage/cloudways-token`.
 - **Build machines are separate from test machines.** PHP, Composer, and Node are needed to build the app, and they belong on the build machine only. A test machine gets the installer or package, nothing else.
+
+### Branches and releases
+
+- `main` is the release branch. Only merged, QA-approved work lands there, and release tags are cut from it.
+- `dev` is the integration and QA branch. Developers and users test here before anything reaches `main`.
+- Every new feature gets a branch named `feature/<feature-name>`. Every bug fix gets `bugfix/<bug-name>`. Use short kebab-case names (e.g. `feature/windows-ci`, `bugfix/import-port-clash`).
+- Process for each change:
+  1. Create the `feature/*` or `bugfix/*` branch from `main`.
+  2. Commit all the necessary changes to that branch.
+  3. When the branch is stable, open a PR from it into `dev`.
+  4. QA happens on `dev` with other developers and users.
+  5. Once QA passes, open a PR from the same custom branch into `main`.
+- Do not commit directly to `main` or `dev`. Do not open the `main` PR before the `dev` QA pass.
