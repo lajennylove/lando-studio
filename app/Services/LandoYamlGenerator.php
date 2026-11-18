@@ -149,6 +149,42 @@ class LandoYamlGenerator
      *
      * @param  list<string>  $names
      */
+    /**
+     * Reads the PHP version from a site's .lando.yml, or returns null when the file has no php line.
+     */
+    public static function phpVersionFor(string $sitePath): ?string
+    {
+        $file = rtrim($sitePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'.lando.yml';
+        if (! is_file($file)) {
+            return null;
+        }
+
+        return preg_match('/^  php: "([^"]+)"\r?$/m', (string) file_get_contents($file), $m) ? $m[1] : null;
+    }
+
+    /**
+     * Sets the PHP version in a site's .lando.yml in place, leaving the rest of the file as it is. The site must be
+     * rebuilt afterwards for the containers to use it.
+     *
+     * @throws \InvalidArgumentException when the version is not "major.minor"
+     * @throws \RuntimeException when the file has no php line
+     */
+    public function setPhpVersion(string $sitePath, string $version): void
+    {
+        if (! preg_match('/^\d+\.\d+$/', $version)) {
+            throw new \InvalidArgumentException('PHP version must look like 8.4.');
+        }
+
+        $file = rtrim($sitePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'.lando.yml';
+        $yaml = is_file($file) ? (string) file_get_contents($file) : '';
+        $yaml = preg_replace('/^(  php: )"[^"]+"(\r?)$/m', '$1"'.$version.'"$2', $yaml, 1, $count);
+        if ($count !== 1) {
+            throw new \RuntimeException('.lando.yml has no php version line.');
+        }
+
+        file_put_contents($file, $yaml);
+    }
+
     public function setDevPlugins(string $sitePath, array $names): void
     {
         $file = rtrim($sitePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'.lando.yml';

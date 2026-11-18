@@ -221,7 +221,7 @@ class LandoService
         // Disable Composer's internal process timeout so large package extractions
         // (e.g. google/apiclient-services) don't fail mid-unzip.
         // lando ssh -c execs directly (no shell), so we need bash to interpret the env var.
-        $cmd = $this->buildCommand($path, "ssh -c \"bash -c 'COMPOSER_PROCESS_TIMEOUT=0 composer install --working-dir=/app/{$subdir}'\"");
+        $cmd = $this->afterPhpCheck($path, $subdir, $this->buildCommand($path, "ssh -c \"bash -c 'COMPOSER_PROCESS_TIMEOUT=0 composer install --working-dir=/app/{$subdir}'\""));
 
         // Composer is silent while it unpacks, for many minutes on a slow file share. Windows steps get a heartbeat
         // from PlatformDetector::wrapCommandWithLogRedirect; elsewhere this keeps the log alive.
@@ -248,7 +248,7 @@ class LandoService
     {
         $escapedPath = $this->escapePath($path);
         $lando = $this->getLandoPath();
-        $cmd = "cd {$escapedPath} && {$lando} composer {$verb} --working-dir=/app/{$subdir}";
+        $cmd = $this->afterPhpCheck($path, $subdir, "cd {$escapedPath} && {$lando} composer {$verb} --working-dir=/app/{$subdir}");
 
         return $this->platform->isWindows()
             ? $cmd
@@ -407,6 +407,28 @@ class LandoService
     private function wrapInShell(string $command): string
     {
         return $command;
+    }
+
+    /**
+     * Runs lando:php-check before a Composer command, so Composer never runs on a PHP version the project rejects.
+     *
+     * When the check or Composer fails, the step log ends with a [Lando Studio ERROR] line, so the failure is not
+     * mistaken for a finished step. On Unix the heartbeat loop is stopped before that line, since the heartbeat is
+     * only killed on success.
+     */
+    private function afterPhpCheck(string $path, string $subdir, string $composer): string
+    {
+        $php = $this->escapePath(PHP_BINARY);
+        $artisan = $this->escapePath(base_path('artisan'));
+        $check = ($this->platform->isWindows() ? '& '.$php : $php).' '.$artisan
+            .' lando:php-check --path='.$this->escapePath($path).' --subdir='.$this->escapePath($subdir);
+        $message = '[Lando Studio ERROR] Composer did not finish. The PHP check or Composer failed; see the output above.';
+
+        if ($this->platform->isWindows()) {
+            return "{$check} && {$composer}; if (-not \$?) { Write-Output '{$message}' }";
+        }
+
+        return "{$check} && {$composer} || { echo ".escapeshellarg($message).'; kill $LANDO_STUDIO_HB 2>/dev/null; false; }';
     }
 
     private function escapePath(string $path): string
