@@ -248,7 +248,11 @@ class LandoService
     {
         $escapedPath = $this->escapePath($path);
         $lando = $this->getLandoPath();
-        $cmd = $this->afterPhpCheck($path, $subdir, "cd {$escapedPath} && {$lando} composer {$verb} --working-dir=/app/{$subdir}");
+        // Windows PowerShell 5.1 (what the steps run) has no && operator, so Windows chains with ; and $LASTEXITCODE.
+        $composer = $this->platform->isWindows()
+            ? "Set-Location {$escapedPath}; & {$lando} composer {$verb} --working-dir=/app/{$subdir}"
+            : "cd {$escapedPath} && {$lando} composer {$verb} --working-dir=/app/{$subdir}";
+        $cmd = $this->afterPhpCheck($path, $subdir, $composer);
 
         return $this->platform->isWindows()
             ? $cmd
@@ -425,7 +429,8 @@ class LandoService
         $message = '[Lando Studio ERROR] Composer did not finish. The PHP check or Composer failed; see the output above.';
 
         if ($this->platform->isWindows()) {
-            return "{$check} && {$composer}; if (-not \$?) { Write-Output '{$message}' }";
+            // Windows PowerShell 5.1 has no && operator: run the check, then Composer only if the check passed.
+            return "{$check}; if (\$LASTEXITCODE -eq 0) { {$composer} }; if (\$LASTEXITCODE -ne 0) { Write-Output '{$message}' }";
         }
 
         return "{$check} && {$composer} || { echo ".escapeshellarg($message).'; kill $LANDO_STUDIO_HB 2>/dev/null; false; }';

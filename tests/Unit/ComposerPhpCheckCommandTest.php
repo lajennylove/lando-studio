@@ -52,8 +52,25 @@ class ComposerPhpCheckCommandTest extends TestCase
     {
         $command = $this->landoService(true)->composerInstallWithHeartbeat('C:/sites/shop', 'wp/wp-content/themes/shop');
 
-        $this->assertStringContainsString('if (-not $?)', $command);
+        $this->assertStringContainsString('if ($LASTEXITCODE -ne 0)', $command);
         $this->assertStringContainsString('[Lando Studio ERROR] Composer did not finish', $command);
+    }
+
+    /**
+     * The steps run in Windows PowerShell 5.1, which rejects && as a statement separator. A command with && never runs.
+     */
+    #[DataProvider('platforms')]
+    public function test_windows_commands_never_use_and_and(bool $windows): void
+    {
+        if (! $windows) {
+            $this->markTestSkipped('Only the Windows shell rejects &&.');
+        }
+
+        $install = $this->landoService(true)->composerInstallWithHeartbeat('C:/sites/shop', 'wp/wp-content/themes/shop');
+        $update = $this->landoService(true)->composerUpdateWithHeartbeat('C:/sites/shop', 'wp/wp-content/themes/shop');
+
+        $this->assertStringNotContainsString(' && ', $install);
+        $this->assertStringNotContainsString(' && ', $update);
     }
 
     public function test_a_failed_check_or_composer_stops_the_heartbeat_on_unix(): void
