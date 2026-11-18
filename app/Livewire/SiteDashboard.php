@@ -202,7 +202,7 @@ class SiteDashboard extends Component
             return;
         }
 
-        $newStatus = ($states[$this->site->name] ?? false) ? SiteStatus::Running : SiteStatus::Stopped;
+        $newStatus = ($states[LandoContainer::appName($this->site->name)] ?? false) ? SiteStatus::Running : SiteStatus::Stopped;
 
         if ($this->site->status !== $newStatus && $this->site->status !== SiteStatus::Creating) {
             $this->site->update(['status' => $newStatus]);

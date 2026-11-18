@@ -23,4 +23,11 @@ class LandoContainerTest extends TestCase
     {
         $this->assertSame('lockerroom2_appserver_1', LandoContainer::appserver('Locker Room_2!'));
     }
+
+    public function test_the_app_name_drops_hyphens_the_way_lando_does(): void
+    {
+        $this->assertSame('twgcasino', LandoContainer::appName('twg-casino'));
+        $this->assertSame('shop', LandoContainer::appName('shop'));
+        $this->assertSame('lockerroom2', LandoContainer::appName('Locker Room_2!'));
+    }
 }

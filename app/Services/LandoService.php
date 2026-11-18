@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Support\LandoContainer;
+
 class LandoService
 {
     /**
@@ -359,7 +361,7 @@ class LandoService
         if ($states !== null) {
             // Derive app name from the path's basename as fallback.
             // An app missing from the list is not initialised / not running.
-            return $states[$appName ?? basename($path)] ?? false;
+            return $states[LandoContainer::appName($appName ?? basename($path))] ?? false;
         }
 
         // Fallback: lando info (project-directory-based check). cmd.exe on Windows has no Set-Location, so it

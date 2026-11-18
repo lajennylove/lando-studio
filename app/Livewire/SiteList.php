@@ -5,6 +5,7 @@ namespace App\Livewire;
 use App\Enums\SiteStatus;
 use App\Models\Site;
 use App\Services\LandoService;
+use App\Support\LandoContainer;
 use Livewire\Attributes\On;
 use Livewire\Component;
 
@@ -38,7 +39,7 @@ class SiteList extends Component
                 continue;
             }
 
-            $status = ($states[$site->name] ?? false) ? SiteStatus::Running : SiteStatus::Stopped;
+            $status = ($states[LandoContainer::appName($site->name)] ?? false) ? SiteStatus::Running : SiteStatus::Stopped;
             if ($site->status !== $status) {
                 $site->update(['status' => $status]);
             }

@@ -731,10 +731,11 @@ class SiteManager
 
         if ($platform->isWindows()) {
             $landoDestroy = $this->lando->destroy($site->path);
-            $name = $site->name;
+            // Containers and networks carry Lando's app name (hyphens dropped), not the site name.
+            $name = LandoContainer::appName($site->name);
 
             // After lando destroy, force-remove any lingering Docker containers and
-            // networks that share the site name. On Windows, lando's stderr warnings
+            // networks that share the app name. On Windows, lando's stderr warnings
             // (NativeCommandError) can interfere with cleanup, leaving stale port
             // bindings that block the next lando start for a same-named site.
             $dockerCleanup = "docker ps -aq --filter \"name={$name}\" | ForEach-Object { docker rm -f \$_ } 2>\$null; "
