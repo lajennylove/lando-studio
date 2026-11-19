@@ -8,6 +8,7 @@ use App\Models\RemoteSite;
 use App\Models\RepositoryCredential;
 use App\Models\Site;
 use App\Support\GitCredentials;
+use App\Support\LandoContainer;
 use Illuminate\Support\Str;
 
 class SiteManager
@@ -361,7 +362,7 @@ class SiteManager
                 'command' => $this->ssh->buildRsyncPluginsCommand(
                     $remoteSite,
                     $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'plugins',
-                    $usesVolumes ? "{$name}_appserver_1" : null,
+                    $usesVolumes ? LandoContainer::appserver($name) : null,
                 ),
                 'step' => count($steps) + 2,
             ],
@@ -617,7 +618,7 @@ class SiteManager
     private function prepareVolumesCommand(string $name, string $path): string
     {
         $targets = implode(' ', LandoYamlGenerator::volumeTargetsFor($path));
-        $container = preg_replace('/[^A-Za-z0-9_.-]/', '', $name).'_appserver_1';
+        $container = LandoContainer::appserver($name);
 
         return "docker exec -u root {$container} sh -c \"chown -R www-data:www-data {$targets}\"; "
             .'if ($LASTEXITCODE -ne 0) { throw \'Could not prepare the project volumes\' }; '
@@ -630,7 +631,7 @@ class SiteManager
      */
     private function wpCoreCheckInContainerCommand(string $name): string
     {
-        $container = preg_replace('/[^A-Za-z0-9_.-]/', '', $name).'_appserver_1';
+        $container = LandoContainer::appserver($name);
 
         return '$ok = $false; for ($i = 0; $i -lt 60; $i++) { '
             ."docker exec {$container} sh -c \"test -f /app/wp/wp-includes/compat.php && test -d /app/wp/wp-admin\" 2>\$null; "
@@ -730,10 +731,11 @@ class SiteManager
 
         if ($platform->isWindows()) {
             $landoDestroy = $this->lando->destroy($site->path);
-            $name = $site->name;
+            // Containers and networks carry Lando's app name (hyphens dropped), not the site name.
+            $name = LandoContainer::appName($site->name);
 
             // After lando destroy, force-remove any lingering Docker containers and
-            // networks that share the site name. On Windows, lando's stderr warnings
+            // networks that share the app name. On Windows, lando's stderr warnings
             // (NativeCommandError) can interfere with cleanup, leaving stale port
             // bindings that block the next lando start for a same-named site.
             $dockerCleanup = "docker ps -aq --filter \"name={$name}\" | ForEach-Object { docker rm -f \$_ } 2>\$null; "

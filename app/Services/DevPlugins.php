@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Support\LandoContainer;
 use Symfony\Component\Process\Process;
 
 /**
@@ -19,7 +20,7 @@ class DevPlugins
 
     public function containerFor(string $siteName): string
     {
-        return preg_replace('/[^A-Za-z0-9_.-]/', '', $siteName).'_appserver_1';
+        return LandoContainer::appserver($siteName);
     }
 
     /**
