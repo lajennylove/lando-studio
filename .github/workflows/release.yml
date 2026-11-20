@@ -168,6 +168,22 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: php artisan native:build mac ${{ matrix.arch }} -v
 
+      - name: Verify the app is signed with Developer ID
+        # electron-builder can exit with its signing error and still leave an app behind. Without this check
+        # the app goes to notarization unsigned, and Apple rejects it.
+        run: |
+          set -euo pipefail
+          APP=$(find dist -maxdepth 3 -type d -name '*.app' | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app bundle found under dist/."
+            exit 1
+          fi
+          if ! codesign -dv --verbose=4 "$APP" 2>&1 | grep -q "Authority=Developer ID Application"; then
+            echo "::error::$APP is not signed with a Developer ID Application certificate. Check the electron-builder signing step above."
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
       - name: Locate the built app
         id: app
         run: |
