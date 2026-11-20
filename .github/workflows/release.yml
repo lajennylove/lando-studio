@@ -156,6 +156,32 @@ jobs:
       # electron-builder signs the app with the Developer ID identity from CSC_LINK.
       # Notarization is NOT done by NativePHP's hook (it reports success even when
       # notarization fails), so it is done explicitly in the steps below.
+      - name: Import the Developer ID certificate into a build keychain
+        # electron-builder imports CSC_LINK itself and then runs set-key-partition-list with the .p12 password
+        # as the keychain password. The keychain has a random password, so that step fails on current macOS
+        # runners and no identity is used. Importing here, with a keychain password this step controls, and
+        # letting electron-builder sign with the identity by name avoids that step.
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          P12="$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$CSC_LINK" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$P12"
+          if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application: Jennifer Eileen Martinez Aguilar (P9AV5PNQPU)"; then
+            echo "::error::The Developer ID Application identity was not found after the import."
+            exit 1
+          fi
+
       - name: Build macOS app (signed by electron-builder)
         env:
           NATIVEPHP_APP_ID: com.landostudio.app
@@ -164,8 +190,7 @@ jobs:
           APP_ENV: production
           APP_DEBUG: 'false'
           APP_URL: http://localhost
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: 'Developer ID Application: Jennifer Eileen Martinez Aguilar (P9AV5PNQPU)'
         run: php artisan native:build mac ${{ matrix.arch }} -v
 
       - name: Verify the app is signed with Developer ID
