@@ -190,7 +190,7 @@ jobs:
           APP_ENV: production
           APP_DEBUG: 'false'
           APP_URL: http://localhost
-          CSC_NAME: 'Developer ID Application: Jennifer Eileen Martinez Aguilar (P9AV5PNQPU)'
+          CSC_NAME: 'Jennifer Eileen Martinez Aguilar (P9AV5PNQPU)'
         run: php artisan native:build mac ${{ matrix.arch }} -v
 
       - name: Verify the app is signed with Developer ID
