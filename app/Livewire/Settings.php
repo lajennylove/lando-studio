@@ -5,10 +5,12 @@ namespace App\Livewire;
 use App\Livewire\Concerns\WithNotifications;
 use App\Models\RemoteSite;
 use App\Models\UserPreference;
+use App\Rules\RepositoryAddress;
 use App\Services\ApplicationDatabaseReset;
 use App\Services\DependencyChecker;
 use App\Services\OptimizedMode;
 use App\Services\PlatformDetector;
+use App\Services\SiteManager;
 use App\Support\LogContentUtf8;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
@@ -86,6 +88,14 @@ class Settings extends Component
     public bool $installComposerDependencies = false;
 
     public bool $installNodeDependencies = false;
+
+    /** Astro (headless) project next to the theme. An empty repo URL means the site has no Astro project. */
+    public string $astroRepoUrl = '';
+
+    public string $astroBranch = '';
+
+    /** Folder under the site's wp/ folder, for example "the-beach". */
+    public string $astroFolder = '';
 
     public bool $showDeleteModal = false;
 
@@ -269,6 +279,9 @@ class Settings extends Component
         $this->repoUrl = $remote->repo_url ?? '';
         $this->installComposerDependencies = (bool) $remote->install_composer_dependencies;
         $this->installNodeDependencies = (bool) $remote->install_node_dependencies;
+        $this->astroRepoUrl = $remote->astro_repo_url ?? '';
+        $this->astroBranch = $remote->astro_branch ?? '';
+        $this->astroFolder = $remote->astro_folder ?? '';
         $this->showRemoteSiteForm = true;
     }
 
@@ -282,9 +295,18 @@ class Settings extends Component
             'remotePath' => 'required|string|max:512',
             'dbName' => 'required',
             'dbUser' => 'required',
+            'repoUrl' => ['nullable', 'max:512', new RepositoryAddress],
+            'astroRepoUrl' => ['nullable', 'max:512', new RepositoryAddress],
+            'astroBranch' => ['nullable', 'string', 'max:100', function (string $attribute, mixed $value, \Closure $fail) {
+                if (filled($value) && ! SiteManager::isValidBranchName((string) $value)) {
+                    $fail('Use letters, numbers, dots, dashes, underscores and slashes only.');
+                }
+            }],
+            'astroFolder' => ['nullable', 'string', 'max:100', 'regex:/^[A-Za-z0-9._-]+$/', 'required_with:astroRepoUrl'],
         ]);
 
         $repoUrl = $this->repoUrl ?: null;
+        $astroRepoUrl = $this->astroRepoUrl ?: null;
 
         $localSlug = Str::slug(trim($this->localSiteName));
         $localDomain = $localSlug !== '' ? "https://{$localSlug}.lndo.site" : null;
@@ -303,6 +325,9 @@ class Settings extends Component
             'repo_url' => $repoUrl,
             'install_composer_dependencies' => $repoUrl && $this->installComposerDependencies,
             'install_node_dependencies' => $repoUrl && $this->installNodeDependencies,
+            'astro_repo_url' => $astroRepoUrl,
+            'astro_branch' => $astroRepoUrl ? ($this->astroBranch ?: 'main') : null,
+            'astro_folder' => $astroRepoUrl ? $this->astroFolder : null,
         ];
 
         if ($this->editingRemoteSiteId) {
@@ -376,6 +401,9 @@ class Settings extends Component
         $this->repoUrl = '';
         $this->installComposerDependencies = false;
         $this->installNodeDependencies = false;
+        $this->astroRepoUrl = '';
+        $this->astroBranch = '';
+        $this->astroFolder = '';
     }
 
     public function resetApplicationData(): void

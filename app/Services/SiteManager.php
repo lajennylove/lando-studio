@@ -657,7 +657,8 @@ class SiteManager
             // A theme folder left from an earlier run is fetched, not cloned over: `git clone` fails on it, and the
             // checkout step that follows would then report "up to date" against a stale origin/main. A non-empty
             // folder that is not a git repository is never touched.
-            return "Set-Location \"{$themesDir}\"; {$login}\$env:GIT_TERMINAL_PROMPT='0'; "
+            // BatchMode: an SSH address fails at once on an unknown host key or a missing key, instead of waiting.
+            return "Set-Location \"{$themesDir}\"; {$login}\$env:GIT_TERMINAL_PROMPT='0'; \$env:GIT_SSH_COMMAND='ssh -o BatchMode=yes'; "
                 ."if (Test-Path -LiteralPath '{$name}\\.git') { Write-Host 'Theme folder already exists, fetching its latest commits instead of cloning.'; Set-Location '{$name}'; git fetch --progress origin; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme fetched.' } } "
                 // A theme folder that only holds the empty mount points of the vendor and node_modules volumes (Docker
                 // creates them on the host when the container starts) is turned into a checkout in place.
@@ -671,7 +672,9 @@ class SiteManager
         $dir = escapeshellarg($themeName);
         // GIT_TERMINAL_PROMPT=0 makes a missing login fail at once. Without it git waits for a username that
         // nothing can answer, and the step stops with no output.
-        $env = ($hasSavedLogin ? GitCredentials::shellPrefix($credentialFile) : '').'GIT_TERMINAL_PROMPT=0 ';
+        // BatchMode: an SSH address fails at once on an unknown host key or a missing key, instead of waiting.
+        $env = ($hasSavedLogin ? GitCredentials::shellPrefix($credentialFile) : '')
+            .'GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='.escapeshellarg('ssh -o BatchMode=yes').' ';
 
         $acquire = "if [ -d {$dir}/.git ]; then echo 'Theme folder already exists, fetching its latest commits instead of cloning.'; "
             ."(cd {$dir} && {$env}git fetch --progress origin) && echo 'Theme fetched.'; "

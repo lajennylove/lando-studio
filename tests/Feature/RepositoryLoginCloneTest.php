@@ -53,7 +53,7 @@ class RepositoryLoginCloneTest extends TestCase
     {
         $command = $this->cloneCommand('linux');
 
-        $this->assertStringContainsString('GIT_TERMINAL_PROMPT=0 git clone', $command);
+        $this->assertStringContainsString('GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes" git clone', $command);
         $this->assertStringNotContainsString('GIT_ASKPASS', $command);
     }
 
