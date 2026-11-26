@@ -13,7 +13,7 @@
                     class="relative"
                 >
                     {{-- Status as a vertical stripe along the left edge, the full height of the row. --}}
-                    <span class="absolute left-0 top-0 bottom-0 w-1 rounded-r {{ match($site->status->value ?? $site->status) {
+                    <span class="absolute left-0 top-0 bottom-0 w-1 {{ match($site->status->value ?? $site->status) {
                         'running' => 'bg-green-500',
                         'creating' => 'bg-blue-500 animate-pulse',
                         'error' => 'bg-red-500',
