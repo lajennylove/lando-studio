@@ -10,23 +10,25 @@
                     :href="route('sites.show', $site, false)"
                     :current="request()->routeIs('sites.show') && request()->route('site')?->id === $site->id"
                     wire:navigate
+                    class="relative"
                 >
+                    {{-- Status as a vertical stripe along the left edge, the full height of the row. --}}
+                    <span class="absolute left-0 top-0 bottom-0 w-1 rounded-r {{ match($site->status->value ?? $site->status) {
+                        'running' => 'bg-green-500',
+                        'creating' => 'bg-blue-500 animate-pulse',
+                        'error' => 'bg-red-500',
+                        'stopped' => 'bg-red-400',
+                        default => 'bg-zinc-400',
+                    } }}" title="{{ $site->status->value ?? $site->status }}"></span>
                     <div class="flex items-center gap-2">
-                        <span class="inline-block w-2 h-2 rounded-full {{ match($site->status->value ?? $site->status) {
-                            'running' => 'bg-green-500',
-                            'creating' => 'bg-blue-500 animate-pulse',
-                            'error' => 'bg-red-500',
-                            'stopped' => 'bg-red-400',
-                            default => 'bg-zinc-400',
-                        } }}"></span>
                         @php
                             $tech = $site->site_type === \App\Enums\SiteType::Astro ? 'astro' : 'wordpress';
                             $techLabel = $site->site_type?->label() ?? 'WordPress';
                         @endphp
                         {{-- Light theme shows the light icon, dark theme the dark one (the .dark class, see app.css). --}}
-                        <span class="shrink-0 w-[35px] h-[35px]" title="{{ $techLabel }}">
-                            <img src="{{ asset("tech-icons/{$tech}-light.svg") }}" alt="{{ $techLabel }}" width="35" height="35" class="w-[35px] h-[35px] dark:hidden">
-                            <img src="{{ asset("tech-icons/{$tech}-dark.svg") }}" alt="{{ $techLabel }}" width="35" height="35" class="w-[35px] h-[35px] hidden dark:block">
+                        <span class="shrink-0 w-5 h-5" title="{{ $techLabel }}">
+                            <img src="{{ asset("tech-icons/{$tech}-light.svg") }}" alt="{{ $techLabel }}" width="20" height="20" class="w-5 h-5 dark:hidden">
+                            <img src="{{ asset("tech-icons/{$tech}-dark.svg") }}" alt="{{ $techLabel }}" width="20" height="20" class="w-5 h-5 hidden dark:block">
                         </span>
                         <span class="truncate">{{ $site->name }}</span>
                     </div>
