@@ -3,8 +3,10 @@
 namespace App\Livewire;
 
 use App\Enums\SiteStatus;
+use App\Enums\SiteType;
 use App\Livewire\Concerns\WithNotifications;
 use App\Models\Site;
+use App\Services\AstroPortAllocator;
 use App\Services\DatabasePortAllocator;
 use App\Services\LandoService;
 use App\Services\LandoYamlPortEditor;
@@ -195,10 +197,20 @@ class ImportSites extends Component
     }
 
     /**
-     * @param  array{name: string, path: string, php_version: string, db_version: string, redis_version: string|null}  $candidate
+     * @param  array{name: string, path: string, php_version: string, db_version: string, redis_version: string|null, site_type?: SiteType, astro_port?: int|null}  $candidate
      */
     private function createSite(array $candidate, int $dbPort): void
     {
+        $siteType = $candidate['site_type'] ?? SiteType::Vanilla;
+
+        // An Astro site keeps the port its project is configured for, unless another site already has it.
+        $astroPort = null;
+        if ($siteType === SiteType::Astro) {
+            $configured = $candidate['astro_port'] ?? null;
+            $configuredFree = $configured !== null && ! Site::where('astro_port', $configured)->exists();
+            $astroPort = $configuredFree ? $configured : AstroPortAllocator::next();
+        }
+
         Site::create([
             'name' => $candidate['name'],
             'path' => $candidate['path'],
@@ -209,6 +221,8 @@ class ImportSites extends Component
             'db_version' => $candidate['db_version'],
             'redis_version' => $candidate['redis_version'],
             'db_port' => $dbPort,
+            'site_type' => $siteType,
+            'astro_port' => $astroPort,
         ]);
     }
 
