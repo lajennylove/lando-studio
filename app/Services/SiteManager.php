@@ -294,6 +294,7 @@ class SiteManager
             'db_version' => $versions['db_version'],
             'redis_version' => $versions['redis_version'],
             'db_port' => $dbPort,
+            'astro_port' => $remoteSite->astro_repo_url ? AstroPortAllocator::next() : null,
             'theme_name' => $remoteSite->theme_name,
             'theme_branch' => $themeBranch ?: self::THEME_BRANCH,
             'remote_site_id' => $remoteSite->id,
@@ -486,7 +487,74 @@ class SiteManager
             'step' => $stepNum++,
         ];
 
+        // Headless site: the Astro project in wp/<folder>, its own .env, dependencies, build and server.
+        $astroFolder = trim((string) ($remoteSite->astro_folder ?? ''));
+        if ($remoteSite->astro_repo_url && $astroFolder !== '' && $site->astro_port) {
+            $astroBranch = $remoteSite->astro_branch ?: 'main';
+            $astroPort = (int) $site->astro_port;
+            $astroSubdir = 'wp/'.$astroFolder;
+            $astroPath = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.$astroFolder;
+
+            $astroClone = [
+                'label' => 'Cloning Astro project',
+                'command' => $this->gitCloneIntoCommand($path.DIRECTORY_SEPARATOR.'wp', $remoteSite->astro_repo_url, $astroFolder, $site),
+                'step' => $stepNum++,
+            ];
+            $astroLogin = RepositoryCredential::where('host', $this->repositoryAccess->hostFor($remoteSite->astro_repo_url))->first();
+            if ($astroLogin) {
+                $astroClone['git_credentials_host'] = $astroLogin->host;
+            }
+            $steps[] = $astroClone;
+
+            $steps[] = [
+                'label' => 'Switching Astro project to '.$astroBranch.' branch',
+                'command' => $this->gitCheckoutCommand($astroPath, $astroBranch),
+                'step' => $stepNum++,
+            ];
+            $steps[] = [
+                'label' => 'Writing Astro environment',
+                'command' => $this->astroArtisanCommand('lando-dev:astro-env', [$path, $astroFolder, (string) $astroPort]),
+                'step' => $stepNum++,
+            ];
+            $steps[] = [
+                'label' => 'Installing Astro dependencies',
+                'command' => $this->lando->yarn($path, $astroSubdir),
+                'step' => $stepNum++,
+                'inactivity_timeout' => 120,
+            ];
+            $steps[] = [
+                'label' => 'Building Astro project',
+                'command' => $this->lando->yarn($path, $astroSubdir, 'build'),
+                'step' => $stepNum++,
+                'inactivity_timeout' => 120,
+            ];
+            $steps[] = [
+                'label' => 'Starting Astro server',
+                'command' => $this->astroArtisanCommand('lando-dev:astro-serve', [$path, $astroFolder, (string) $astroPort]),
+                'step' => $stepNum++,
+                'inactivity_timeout' => 120,
+            ];
+        }
+
         return $steps;
+    }
+
+    /**
+     * Runs one of the Studio's own artisan commands from the host PHP, with every argument quoted for the shell.
+     *
+     * @param  list<string>  $args
+     */
+    private function astroArtisanCommand(string $command, array $args): string
+    {
+        if ($this->platform->isWindows()) {
+            $php = '"'.str_replace('"', '""', PHP_BINARY).'"';
+            $artisan = '"'.str_replace('"', '""', base_path('artisan')).'"';
+            $quoted = implode(' ', array_map(fn (string $arg) => "'".str_replace("'", "''", $arg)."'", $args));
+
+            return "& {$php} {$artisan} {$command} {$quoted}";
+        }
+
+        return implode(' ', [escapeshellarg(PHP_BINARY), escapeshellarg(base_path('artisan')), $command, ...array_map('escapeshellarg', $args)]);
     }
 
     /**
@@ -643,16 +711,25 @@ class SiteManager
 
     private function gitCloneCommand(string $path, string $repoUrl, string $themeName, Site $site): string
     {
+        return $this->gitCloneIntoCommand($path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes', $repoUrl, $themeName, $site);
+    }
+
+    /**
+     * Clones $repoUrl into $parentDir/$folder, or fetches it when the folder already holds a checkout. Used for the
+     * WordPress theme (in wp-content/themes) and for the Astro project (in wp/).
+     */
+    private function gitCloneIntoCommand(string $parentDir, string $repoUrl, string $folder, Site $site): string
+    {
         $credentialFile = GitCredentials::fileFor('site-'.$site->id);
         $hasSavedLogin = RepositoryCredential::where('host', $this->repositoryAccess->hostFor($repoUrl))->exists();
 
         if ($this->platform->isWindows()) {
-            $themesDir = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes';
+            $themesDir = $parentDir;
             $login = $hasSavedLogin
                 ? "\$env:GIT_ASKPASS='".str_replace("'", "''", GitCredentials::askpassPath())."'; \$env:LANDO_STUDIO_GIT_CREDENTIALS='".str_replace("'", "''", $credentialFile)."'; "
                 : '';
             $cleanup = $hasSavedLogin ? "; Remove-Item -Force '".str_replace("'", "''", $credentialFile)."' -ErrorAction SilentlyContinue" : '';
-            $name = str_replace("'", "''", $themeName);
+            $name = str_replace("'", "''", $folder);
 
             // A theme folder left from an earlier run is fetched, not cloned over: `git clone` fails on it, and the
             // checkout step that follows would then report "up to date" against a stale origin/main. A non-empty
@@ -664,12 +741,12 @@ class SiteManager
                 // creates them on the host when the container starts) is turned into a checkout in place.
                 ."elseif ((Test-Path -LiteralPath '{$name}') -and -not (Get-ChildItem -Force -LiteralPath '{$name}' | Where-Object { \$_.Name -notin 'vendor', 'node_modules' })) { Write-Host 'Theme folder only holds volume mount points, fetching the repository into it.'; Set-Location '{$name}'; git init -q; git remote add origin '".str_replace("'", "''", $repoUrl)."'; git fetch --progress origin; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme fetched.' } } "
                 ."elseif ((Test-Path -LiteralPath '{$name}') -and ((Get-ChildItem -Force -LiteralPath '{$name}' | Measure-Object).Count -gt 0)) { Write-Host '[Lando Studio ERROR] The theme folder already exists and is not a git repository, so it was not touched. Remove it or use another site name.'; \$code = 1 } "
-                ."else { git clone --progress {$repoUrl} {$themeName}; \$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme cloned successfully.' } }"
+                ."else { git clone --progress {$repoUrl} {$folder};\$code = \$LASTEXITCODE; if (\$code -eq 0) { Write-Host 'Theme cloned successfully.' } }"
                 ."{$cleanup}; if (\$code -ne 0) { throw 'git clone failed' }";
         }
 
-        $themes = escapeshellarg("{$path}/wp/wp-content/themes");
-        $dir = escapeshellarg($themeName);
+        $themes = escapeshellarg($parentDir);
+        $dir = escapeshellarg($folder);
         // GIT_TERMINAL_PROMPT=0 makes a missing login fail at once. Without it git waits for a username that
         // nothing can answer, and the step stops with no output.
         // BatchMode: an SSH address fails at once on an unknown host key or a missing key, instead of waiting.
@@ -679,7 +756,7 @@ class SiteManager
         $acquire = "if [ -d {$dir}/.git ]; then echo 'Theme folder already exists, fetching its latest commits instead of cloning.'; "
             ."(cd {$dir} && {$env}git fetch --progress origin) && echo 'Theme fetched.'; "
             ."elif [ -n \"\$(ls -A {$dir} 2>/dev/null)\" ]; then echo '[Lando Studio ERROR] The theme folder already exists and is not a git repository, so it was not touched. Remove it or use another site name.' >&2; false; "
-            ."else {$env}git clone --progress {$repoUrl} {$themeName} && echo \"Theme cloned successfully.\"; fi";
+            ."else {$env}git clone --progress {$repoUrl} {$folder} && echo\"Theme cloned successfully.\"; fi";
 
         if ($hasSavedLogin) {
             return "cd {$themes} && { {$acquire}; }; status=\$?; rm -f ".escapeshellarg($credentialFile).' && [ "$status" -eq 0 ]';
