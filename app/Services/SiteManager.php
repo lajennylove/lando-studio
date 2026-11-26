@@ -558,7 +558,7 @@ class SiteManager
      *
      * @param  list<string>  $args
      */
-    private function astroArtisanCommand(string $command, array $args): string
+    public function astroArtisanCommand(string $command, array $args): string
     {
         if ($this->platform->isWindows()) {
             $php = '"'.str_replace('"', '""', PHP_BINARY).'"';

@@ -19,7 +19,7 @@ use Symfony\Component\Process\Process;
  */
 class AstroProxyCommand extends Command
 {
-    protected $signature = 'lando-dev:astro-proxy {path : Absolute site root} {site-id : Site id} {remote-id : Remote site preset id}';
+    protected $signature = 'lando-dev:astro-proxy {path : Absolute site root} {site-id : Site id} {remote-id? : Remote site preset id, when the site has one}';
 
     protected $description = 'Route a headless site front end to its Astro server, and enable Apache proxying';
 
@@ -35,14 +35,18 @@ class AstroProxyCommand extends Command
             return self::FAILURE;
         }
 
-        $remote = RemoteSite::find((int) $this->argument('remote-id'));
-        if (! $remote) {
+        // A site with no preset (an imported site) gets WordPress's standard rules instead of the image proxy.
+        $remoteId = $this->argument('remote-id');
+        $remote = $remoteId !== null && $remoteId !== '' ? RemoteSite::find((int) $remoteId) : null;
+        if ($remoteId !== null && $remoteId !== '' && ! $remote) {
             $this->error('[Lando Studio ERROR] The remote site preset was not found.');
 
             return self::FAILURE;
         }
 
-        $wordpressBlock = $ssh->buildHtaccessRewriteContent((string) $remote->remote_domain);
+        $wordpressBlock = $remote
+            ? $ssh->buildHtaccessRewriteContent((string) $remote->remote_domain)
+            : "# BEGIN WordPress\n<IfModule mod_rewrite.c>\nRewriteEngine On\nRewriteBase /\nRewriteRule ^index\\.php$ - [L]\nRewriteCond %{REQUEST_FILENAME} !-f\nRewriteCond %{REQUEST_FILENAME} !-d\nRewriteRule . /index.php [L]\n</IfModule>\n# END WordPress\n";
         file_put_contents(
             $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'.htaccess',
             AstroProxyRules::htaccess($wordpressBlock, $port)
