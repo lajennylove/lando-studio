@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\GitCredentials;
+use App\Support\RepositoryUrl;
 use Illuminate\Support\Facades\Process;
 
 /**
@@ -11,14 +12,12 @@ use Illuminate\Support\Facades\Process;
 class RepositoryAccess
 {
     /**
-     * Host part of a repository URL (for example devops.cltbcanada.net), lower-cased, or null when the URL
-     * has no host (SSH-style or local paths).
+     * Host part of a repository URL (for example devops.cltbcanada.net), lower-cased. Covers https://, ssh:// and
+     * the scp-style git@host:path form. Null for anything else (local paths).
      */
     public function hostFor(string $repoUrl): ?string
     {
-        $host = parse_url(trim($repoUrl), PHP_URL_HOST);
-
-        return is_string($host) && $host !== '' ? strtolower($host) : null;
+        return RepositoryUrl::host($repoUrl);
     }
 
     /**
@@ -31,7 +30,8 @@ class RepositoryAccess
     public function probe(string $repoUrl, ?string $username = null, ?string $password = null): array
     {
         $file = null;
-        $env = ['GIT_TERMINAL_PROMPT' => '0'];
+        // BatchMode: ssh fails at once on an unknown host key or a missing key instead of waiting for an answer.
+        $env = ['GIT_TERMINAL_PROMPT' => '0', 'GIT_SSH_COMMAND' => 'ssh -o BatchMode=yes'];
 
         if ($username !== null && $password !== null) {
             $file = GitCredentials::fileFor('probe-'.bin2hex(random_bytes(6)));

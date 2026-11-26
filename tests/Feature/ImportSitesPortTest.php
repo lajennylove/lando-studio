@@ -80,7 +80,7 @@ class ImportSitesPortTest extends TestCase
         $this->assertStringContainsString('rebuild '.$this->codePath.DIRECTORY_SEPARATOR.'sportsanddata', implode(' ', (array) $this->startedProcesses()[0]['cmd']));
     }
 
-    public function test_import_leaves_a_site_alone_when_its_port_is_unique(): void
+    public function test_import_keeps_a_unique_port_and_still_rebuilds_the_site(): void
     {
         $this->writeProject('solo', 40_200);
 
@@ -88,10 +88,11 @@ class ImportSitesPortTest extends TestCase
 
         $this->assertSame(40_200, Site::where('name', 'solo')->value('db_port'));
         $this->assertStringContainsString('portforward: 40200', (string) file_get_contents($this->codePath.'/solo/.lando.yml'));
-        $this->assertCount(0, $this->startedProcesses());
+        $this->assertCount(1, $this->startedProcesses());
+        $this->assertStringContainsString('rebuild '.$this->codePath.DIRECTORY_SEPARATOR.'solo', implode(' ', (array) $this->startedProcesses()[0]['cmd']));
     }
 
-    public function test_import_all_gives_every_site_a_unique_port_and_rebuilds_only_changed_ones(): void
+    public function test_import_all_gives_every_site_a_unique_port_and_rebuilds_every_site(): void
     {
         $this->writeProject('alpha', 40_200);
         $this->writeProject('beta', 40_200);
@@ -103,6 +104,10 @@ class ImportSitesPortTest extends TestCase
 
         $this->assertSame(['alpha' => 40_200, 'beta' => 40_100, 'gamma' => 40_101], $ports);
         $this->assertCount(1, $this->startedProcesses());
+        $command = implode(' ', (array) $this->startedProcesses()[0]['cmd']);
+        foreach (['alpha', 'beta', 'gamma'] as $name) {
+            $this->assertStringContainsString('rebuild '.$this->codePath.DIRECTORY_SEPARATOR.$name, $command);
+        }
     }
 
     public function test_poll_stops_once_the_rebuild_marker_is_written(): void

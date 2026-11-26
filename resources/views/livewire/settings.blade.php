@@ -414,6 +414,29 @@
                         </div>
                     @endif
 
+                    <flux:separator />
+                    <flux:heading size="xs">Astro project (headless sites only)</flux:heading>
+                    <flux:text class="text-sm text-zinc-500">Leave the repo URL empty for a WordPress-only site. The Astro project is cloned into wp/&lt;folder&gt; of the local site.</flux:text>
+                    <flux:text class="text-sm text-zinc-500">An SSH address (ssh:// or git@host:path) uses the SSH key in your agent, and the host must already be trusted on this machine. The clone never asks for a key or a host confirmation, so it fails at once instead.</flux:text>
+
+                    <div class="grid grid-cols-3 gap-4">
+                        <flux:field class="col-span-3">
+                            <flux:label>Astro Repo URL</flux:label>
+                            <flux:input wire:model.live.debounce.300ms="astroRepoUrl" placeholder="https://devops.../_git/wp-slotsparadise" />
+                            <flux:error name="astroRepoUrl" />
+                        </flux:field>
+                        <flux:field>
+                            <flux:label>Branch</flux:label>
+                            <flux:input wire:model="astroBranch" placeholder="main" />
+                            <flux:error name="astroBranch" />
+                        </flux:field>
+                        <flux:field class="col-span-2">
+                            <flux:label>Folder under wp/</flux:label>
+                            <flux:input wire:model="astroFolder" placeholder="the-beach" />
+                            <flux:error name="astroFolder" />
+                        </flux:field>
+                    </div>
+
                     <div class="flex items-center gap-3 pt-2">
                         <flux:button type="submit" variant="primary">
                             {{ $editingRemoteSiteId ? 'Update' : 'Add' }} Remote Site

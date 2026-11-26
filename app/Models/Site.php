@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\SiteStatus;
+use App\Enums\SiteType;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -13,6 +14,7 @@ class Site extends Model
 
     protected $casts = [
         'status' => SiteStatus::class,
+        'site_type' => SiteType::class,
         'db_port' => 'integer',
     ];
 

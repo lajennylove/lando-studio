@@ -3,13 +3,16 @@
 namespace App\Livewire;
 
 use App\Enums\SiteStatus;
+use App\Enums\SiteType;
 use App\Livewire\Concerns\WithNotifications;
 use App\Models\Site;
+use App\Services\AstroPortAllocator;
 use App\Services\DatabasePortAllocator;
 use App\Services\LandoService;
 use App\Services\LandoYamlPortEditor;
 use App\Services\LocalSiteScanner;
 use App\Services\PlatformDetector;
+use App\Services\SiteManager;
 use App\Support\LogContentUtf8;
 use Illuminate\View\View;
 use Livewire\Attributes\Layout;
@@ -76,9 +79,8 @@ class ImportSites extends Component
 
         $this->importing = array_values(array_diff($this->importing, [$siteName]));
 
-        if ($standardized['changed']) {
-            $this->startRebuild([$candidate['path']]);
-        }
+        // Every imported project is rebuilt, so its containers and settings are checked inside Lando Studio.
+        $this->startRebuild([$candidate['path']]);
 
         $this->notifySuccess("\"{$siteName}\" has been imported into Lando Studio.");
         $this->dispatch('site-created')->to(SiteList::class);
@@ -115,9 +117,8 @@ class ImportSites extends Component
             $standardized = $this->standardizePort($candidate, $ports, $editor);
             $this->createSite($candidate, $standardized['port']);
 
-            if ($standardized['changed']) {
-                $rebuildPaths[] = $candidate['path'];
-            }
+            // Every imported project is rebuilt, so its containers and settings are checked inside Lando Studio.
+            $rebuildPaths[] = $candidate['path'];
 
             $count++;
         }
@@ -195,10 +196,20 @@ class ImportSites extends Component
     }
 
     /**
-     * @param  array{name: string, path: string, php_version: string, db_version: string, redis_version: string|null}  $candidate
+     * @param  array{name: string, path: string, php_version: string, db_version: string, redis_version: string|null, site_type?: SiteType, astro_port?: int|null}  $candidate
      */
     private function createSite(array $candidate, int $dbPort): void
     {
+        $siteType = $candidate['site_type'] ?? SiteType::Vanilla;
+
+        // An Astro site keeps the port its project is configured for, unless another site already has it.
+        $astroPort = null;
+        if ($siteType === SiteType::Astro) {
+            $configured = $candidate['astro_port'] ?? null;
+            $configuredFree = $configured !== null && ! Site::where('astro_port', $configured)->exists();
+            $astroPort = $configuredFree ? $configured : AstroPortAllocator::next();
+        }
+
         Site::create([
             'name' => $candidate['name'],
             'path' => $candidate['path'],
@@ -209,6 +220,8 @@ class ImportSites extends Component
             'db_version' => $candidate['db_version'],
             'redis_version' => $candidate['redis_version'],
             'db_port' => $dbPort,
+            'site_type' => $siteType,
+            'astro_port' => $astroPort,
         ]);
     }
 
@@ -223,7 +236,21 @@ class ImportSites extends Component
         $lando = app(LandoService::class);
         $platform = app(PlatformDetector::class);
 
-        $commands = array_map(fn (string $path) => $lando->rebuild($path), $projectPaths);
+        $siteManager = app(SiteManager::class);
+        $scanner = app(LocalSiteScanner::class);
+
+        // A rebuild stops an Astro server, so an Astro site gets its server and its front-end routing started again.
+        $commands = [];
+        foreach ($projectPaths as $path) {
+            $commands[] = $lando->rebuild($path);
+
+            $site = Site::where('path', $path)->first();
+            $info = $scanner->classify($path);
+            if ($site && $info['site_type'] === SiteType::Astro && $info['astro_folder'] !== null && $site->astro_port) {
+                $commands[] = $siteManager->astroArtisanCommand('lando-dev:astro-serve', [$path, $info['astro_folder'], (string) $site->id]);
+                $commands[] = $siteManager->astroArtisanCommand('lando-dev:astro-proxy', [$path, (string) $site->id]);
+            }
+        }
         $command = implode('; ', $commands).'; echo \''.self::REBUILD_DONE_MARKER.'\'';
 
         $logFile = storage_path('logs/import_rebuild_'.time().'.log');
