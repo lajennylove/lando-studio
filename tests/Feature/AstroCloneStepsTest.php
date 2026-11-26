@@ -80,6 +80,7 @@ class AstroCloneStepsTest extends TestCase
         $astro = [
             'Cloning Astro project',
             'Switching Astro project to main branch',
+            'Reading the Astro port',
             'Writing Astro environment',
             'Installing Astro dependencies',
             'Building Astro project',
@@ -111,8 +112,9 @@ class AstroCloneStepsTest extends TestCase
         $this->assertStringContainsString('the-beach', $byLabel['Cloning Astro project']['command']);
         $this->assertStringContainsString('the-beach', $byLabel['Installing Astro dependencies']['command']);
         $this->assertStringContainsString('wp/the-beach', $byLabel['Installing Astro dependencies']['command']);
-        $this->assertStringContainsString('4325', $byLabel['Starting Astro server']['command']);
-        $this->assertStringContainsString('4325', $byLabel['Writing Astro environment']['command']);
+        $this->assertStringContainsString('lando-dev:astro-serve', $byLabel['Starting Astro server']['command']);
+        $this->assertStringContainsString('lando-dev:astro-env', $byLabel['Writing Astro environment']['command']);
+        $this->assertStringContainsString('lando-dev:astro-port', $byLabel['Reading the Astro port']['command']);
         $this->assertStringContainsString('release', $byLabel['Switching Astro project to release branch']['command']);
     }
 }

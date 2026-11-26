@@ -18,8 +18,10 @@ final class AstroEnvFile
             'REDIS_HOST' => 'cache',
             'REDIS_PORT' => '6379',
             'REDIS_PASSWORD' => '',
-            'WORDPRESS_API_URL' => 'http://appserver/wp-json/wp/v2',
-            'SEOPRESS_API_URL' => 'http://appserver/wp-json/seopress/v1',
+            // The site's own WordPress, inside its appserver. The name "appserver" is shared by every Lando site on
+            // the same network, so it could reach another site's WordPress.
+            'WORDPRESS_API_URL' => 'http://127.0.0.1/wp-json/wp/v2',
+            'SEOPRESS_API_URL' => 'http://127.0.0.1/wp-json/seopress/v1',
             'PUBLIC_API_URL' => 'http://127.0.0.1:'.$astroPort,
             'ASTRO_ENV' => 'dev',
             'WP_API_USER' => '',

@@ -494,7 +494,6 @@ class SiteManager
         $astroFolder = trim((string) ($remoteSite->astro_folder ?? ''));
         if ($remoteSite->astro_repo_url && $astroFolder !== '' && $site->astro_port) {
             $astroBranch = $remoteSite->astro_branch ?: 'main';
-            $astroPort = (int) $site->astro_port;
             $astroSubdir = 'wp/'.$astroFolder;
             $astroPath = $path.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.$astroFolder;
 
@@ -514,9 +513,15 @@ class SiteManager
                 'command' => $this->gitCheckoutCommand($astroPath, $astroBranch),
                 'step' => $stepNum++,
             ];
+            // The project's own config sets the port production uses, so the local server listens on the same one.
+            $steps[] = [
+                'label' => 'Reading the Astro port',
+                'command' => $this->astroArtisanCommand('lando-dev:astro-port', [$path, $astroFolder, (string) $site->id]),
+                'step' => $stepNum++,
+            ];
             $steps[] = [
                 'label' => 'Writing Astro environment',
-                'command' => $this->astroArtisanCommand('lando-dev:astro-env', [$path, $astroFolder, (string) $astroPort]),
+                'command' => $this->astroArtisanCommand('lando-dev:astro-env', [$path, $astroFolder, (string) $site->id]),
                 'step' => $stepNum++,
             ];
             $steps[] = [
@@ -533,13 +538,13 @@ class SiteManager
             ];
             $steps[] = [
                 'label' => 'Starting Astro server',
-                'command' => $this->astroArtisanCommand('lando-dev:astro-serve', [$path, $astroFolder, (string) $astroPort]),
+                'command' => $this->astroArtisanCommand('lando-dev:astro-serve', [$path, $astroFolder, (string) $site->id]),
                 'step' => $stepNum++,
                 'inactivity_timeout' => 120,
             ];
             $steps[] = [
                 'label' => 'Routing the front end to Astro',
-                'command' => $this->astroArtisanCommand('lando-dev:astro-proxy', [$path, (string) $astroPort, (string) $remoteSite->id]),
+                'command' => $this->astroArtisanCommand('lando-dev:astro-proxy', [$path, (string) $site->id, (string) $remoteSite->id]),
                 'step' => $stepNum++,
                 'inactivity_timeout' => 120,
             ];

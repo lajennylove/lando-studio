@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\Site;
 use App\Services\LandoService;
 use App\Support\AstroEnvFile;
 use Illuminate\Console\Command;
@@ -18,7 +19,7 @@ use Symfony\Component\Process\Process;
  */
 class AstroServeCommand extends Command
 {
-    protected $signature = 'lando-dev:astro-serve {path : Absolute site root} {folder : Astro folder under wp/} {port : Astro port}';
+    protected $signature = 'lando-dev:astro-serve {path : Absolute site root} {folder : Astro folder under wp/} {site-id : Site id}';
 
     protected $description = 'Start the Astro server of a headless site in its appserver and check that it answers';
 
@@ -26,7 +27,8 @@ class AstroServeCommand extends Command
     {
         $path = rtrim((string) $this->argument('path'), '/\\');
         $folder = (string) $this->argument('folder');
-        $port = (int) $this->argument('port');
+        $site = Site::find((int) $this->argument('site-id'));
+        $port = (int) ($site?->astro_port ?? 0);
 
         if (! preg_match('/^[A-Za-z0-9._-]+$/', $folder) || $folder === '.' || $folder === '..' || $port < 1024 || $port > 65535) {
             $this->error('[Lando Studio ERROR] The Astro folder or port is not valid.');

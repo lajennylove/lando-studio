@@ -89,7 +89,7 @@ class AstroCloneStepsPlatformTest extends TestCase
     {
         $commands = $this->astroCommands($windows);
 
-        $this->assertCount(7, $commands, 'clone, branch, env, install, build, serve and routing');
+        $this->assertCount(8, $commands, 'clone, branch, port, env, install, build, serve and routing');
         foreach ($commands as $label => $command) {
             $this->assertNotSame('', trim($command), $label);
         }

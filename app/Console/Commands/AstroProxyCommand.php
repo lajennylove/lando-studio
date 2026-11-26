@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Models\RemoteSite;
+use App\Models\Site;
 use App\Services\LandoService;
 use App\Services\SshService;
 use App\Support\AstroProxyRules;
@@ -18,17 +19,18 @@ use Symfony\Component\Process\Process;
  */
 class AstroProxyCommand extends Command
 {
-    protected $signature = 'lando-dev:astro-proxy {path : Absolute site root} {port : Astro port} {remote-id : Remote site preset id}';
+    protected $signature = 'lando-dev:astro-proxy {path : Absolute site root} {site-id : Site id} {remote-id : Remote site preset id}';
 
     protected $description = 'Route a headless site front end to its Astro server, and enable Apache proxying';
 
     public function handle(LandoService $lando, SshService $ssh): int
     {
         $path = rtrim((string) $this->argument('path'), '/\\');
-        $port = (int) $this->argument('port');
+        $site = Site::find((int) $this->argument('site-id'));
+        $port = (int) ($site?->astro_port ?? 0);
 
         if ($port < 1024 || $port > 65535) {
-            $this->error('[Lando Studio ERROR] The Astro port is not valid.');
+            $this->error('[Lando Studio ERROR] The site has no valid Astro port.');
 
             return self::FAILURE;
         }
