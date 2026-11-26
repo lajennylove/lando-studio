@@ -12,6 +12,8 @@ use App\Services\OptimizedMode;
 use App\Services\PlatformDetector;
 use App\Services\SiteManager;
 use App\Support\LogContentUtf8;
+use App\Support\RemoteSiteCsv;
+use App\Support\RepositoryUrl;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
@@ -496,11 +498,7 @@ class Settings extends Component
     public function exportRemoteSites(): mixed
     {
         $remotes = RemoteSite::all();
-        $headers = [
-            'remote_domain', 'local_domain', 'ssh_server_ip', 'ssh_user', 'ssh_password',
-            'remote_path', 'db_name', 'db_user', 'db_password', 'theme_name', 'repo_url',
-            'install_composer_dependencies', 'install_node_dependencies',
-        ];
+        $headers = RemoteSiteCsv::HEADERS;
 
         $isDemo = $remotes->isEmpty();
         $filename = $isDemo ? 'remote-sites-template.csv' : 'remote-sites-export.csv';
@@ -516,6 +514,7 @@ class Settings extends Component
                     '/home/forge/example.com/public', 'wp_production',
                     'wp_user', 'db_password', 'my-theme',
                     'https://github.com/org/theme', '0', '0',
+                    '', '', '',
                 ]);
             } else {
                 foreach ($remotes as $r) {
@@ -527,6 +526,7 @@ class Settings extends Component
                         $r->repo_url ?? '',
                         $r->install_composer_dependencies ? '1' : '0',
                         $r->install_node_dependencies ? '1' : '0',
+                        $r->astro_repo_url ?? '', $r->astro_branch ?? '', $r->astro_folder ?? '',
                     ]);
                 }
             }
@@ -548,14 +548,8 @@ class Settings extends Component
         $path = $this->batchCsvFile->getRealPath();
         $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
 
-        $expectedHeaders = [
-            'remote_domain', 'local_domain', 'ssh_server_ip', 'ssh_user', 'ssh_password',
-            'remote_path', 'db_name', 'db_user', 'db_password', 'theme_name', 'repo_url',
-            'install_composer_dependencies', 'install_node_dependencies',
-        ];
-
-        $headers = str_getcsv(array_shift($lines));
-        if ($headers !== $expectedHeaders) {
+        $columns = RemoteSiteCsv::columnsFor(str_getcsv((string) array_shift($lines)));
+        if ($columns === null) {
             $this->batchParseError = true;
             $this->batchParseErrorMessage = 'CSV headers do not match the expected format. Please use the template.';
 
@@ -566,11 +560,15 @@ class Settings extends Component
 
         foreach ($lines as $line) {
             $values = str_getcsv($line);
-            if (count($values) !== count($expectedHeaders)) {
+            if (count($values) !== count($columns)) {
                 continue;
             }
 
-            $row = array_combine($expectedHeaders, $values);
+            // Legacy files have no Astro columns, so those read as empty.
+            $row = array_combine($columns, $values) + array_fill_keys(RemoteSiteCsv::HEADERS, '');
+            if ($row['astro_repo_url'] !== '' && $row['astro_branch'] === '') {
+                $row['astro_branch'] = 'main';
+            }
             $existingRecord = $existing->get($row['remote_domain']);
             $changedFields = [];
 
@@ -579,6 +577,7 @@ class Settings extends Component
                     'local_domain', 'ssh_server_ip', 'ssh_user', 'remote_path',
                     'db_name', 'db_user', 'theme_name', 'repo_url',
                     'install_composer_dependencies', 'install_node_dependencies',
+                    'astro_repo_url', 'astro_branch', 'astro_folder',
                 ];
 
                 foreach ($checkFields as $field) {
@@ -620,8 +619,16 @@ class Settings extends Component
         $created = 0;
         $updated = 0;
 
+        $skipped = 0;
+
         foreach ($this->batchRows as $row) {
             if (! $row['selected']) {
+                continue;
+            }
+
+            if (! $this->astroRowIsValid($row['data'])) {
+                $skipped++;
+
                 continue;
             }
 
@@ -637,6 +644,9 @@ class Settings extends Component
                 'repo_url' => $row['data']['repo_url'] ?: null,
                 'install_composer_dependencies' => (bool) (int) $row['data']['install_composer_dependencies'],
                 'install_node_dependencies' => (bool) (int) $row['data']['install_node_dependencies'],
+                'astro_repo_url' => $row['data']['astro_repo_url'] ?: null,
+                'astro_branch' => $row['data']['astro_repo_url'] ? ($row['data']['astro_branch'] ?: 'main') : null,
+                'astro_folder' => $row['data']['astro_repo_url'] ? $row['data']['astro_folder'] : null,
             ];
 
             if (! empty($row['data']['ssh_password'])) {
@@ -662,9 +672,30 @@ class Settings extends Component
         $msg = collect([
             $created ? "{$created} created" : null,
             $updated ? "{$updated} updated" : null,
+            $skipped ? "{$skipped} skipped (invalid Astro repository or folder)" : null,
         ])->filter()->join(', ');
 
         $this->notifySuccess("Import complete: {$msg}.");
+    }
+
+    /**
+     * A row with an Astro repository needs a supported address and a single folder name. A row without one has no
+     * Astro project, so it is always valid.
+     *
+     * @param  array<string, string>  $data
+     */
+    private function astroRowIsValid(array $data): bool
+    {
+        if (($data['astro_repo_url'] ?? '') === '') {
+            return true;
+        }
+
+        $folder = (string) ($data['astro_folder'] ?? '');
+
+        return RepositoryUrl::isSupported((string) $data['astro_repo_url'])
+            && preg_match('/^[A-Za-z0-9._-]+$/', $folder) === 1
+            && $folder !== '.'
+            && $folder !== '..';
     }
 
     public function render()
