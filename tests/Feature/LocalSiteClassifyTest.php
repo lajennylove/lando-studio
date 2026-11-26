@@ -48,6 +48,18 @@ class LocalSiteClassifyTest extends TestCase
         $this->assertNull($result['astro_port']);
     }
 
+    public function test_a_project_with_a_sage_theme_is_classified_as_sage(): void
+    {
+        $theme = $this->root.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes'.DIRECTORY_SEPARATOR.'mytheme';
+        mkdir($theme, 0755, true);
+        file_put_contents($theme.DIRECTORY_SEPARATOR.'composer.json', '{"require": {"roots/sage": "^11.0"}}');
+
+        $result = app(LocalSiteScanner::class)->classify($this->root);
+
+        $this->assertSame(SiteType::Sage, $result['site_type']);
+        $this->assertNull($result['astro_folder']);
+    }
+
     public function test_an_astro_project_is_classified_with_its_folder_and_configured_port(): void
     {
         $folder = $this->root.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'the-beach';

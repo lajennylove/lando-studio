@@ -83,6 +83,14 @@ class LocalSiteScanner
             }
         }
 
+        // A Sage theme (Roots) names roots/sage in its composer.json, next to the stock WordPress themes.
+        foreach (glob($projectDir.DIRECTORY_SEPARATOR.'wp'.DIRECTORY_SEPARATOR.'wp-content'.DIRECTORY_SEPARATOR.'themes'.DIRECTORY_SEPARATOR.'*', GLOB_ONLYDIR) ?: [] as $theme) {
+            $composer = $theme.DIRECTORY_SEPARATOR.'composer.json';
+            if (is_file($composer) && str_contains((string) file_get_contents($composer), '"roots/sage"')) {
+                return ['site_type' => SiteType::Sage, 'astro_folder' => null, 'astro_port' => null];
+            }
+        }
+
         return ['site_type' => SiteType::Vanilla, 'astro_folder' => null, 'astro_port' => null];
     }
 }
