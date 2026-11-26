@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\SiteStatus;
+use App\Enums\SiteType;
 use App\Livewire\Settings;
 use App\Models\RemoteSite;
 use App\Models\RepositoryCredential;
@@ -158,6 +159,7 @@ class SiteManager
             'admin_username' => $adminUser,
             'admin_email' => $adminEmail,
             'theme_name' => $installSage ? $name : null,
+            'site_type' => $installSage ? SiteType::Sage : SiteType::Vanilla,
         ]);
     }
 
@@ -295,6 +297,7 @@ class SiteManager
             'redis_version' => $versions['redis_version'],
             'db_port' => $dbPort,
             'astro_port' => $remoteSite->astro_repo_url ? AstroPortAllocator::next() : null,
+            'site_type' => $remoteSite->astro_repo_url ? SiteType::Astro : SiteType::Vanilla,
             'theme_name' => $remoteSite->theme_name,
             'theme_branch' => $themeBranch ?: self::THEME_BRANCH,
             'remote_site_id' => $remoteSite->id,
