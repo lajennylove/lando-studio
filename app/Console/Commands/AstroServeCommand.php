@@ -34,16 +34,27 @@ class AstroServeCommand extends Command
             return self::FAILURE;
         }
 
-        $command = [$lando->getLandoPath(), 'ssh', '-u', 'root', '-c', $this->serverScript($folder, $port)];
+        // The script goes into the site folder (mounted at /app in the appserver) and runs from there. Passing it on the
+        // command line is not reliable: the quotes and the ; are split by the shells on the way in (see dbImport).
+        $scriptName = ".astro-serve-{$port}.sh";
+        $scriptFile = $path.DIRECTORY_SEPARATOR.$scriptName;
+        file_put_contents($scriptFile, str_replace("\r\n", "\n", $this->serverScript($folder, $port))."\n");
+
+        $command = [$lando->getLandoPath(), 'ssh', '-u', 'root', '-c', "bash /app/{$scriptName}"];
         if (PHP_OS_FAMILY === 'Windows' && preg_match('/\.(cmd|bat)$/i', $command[0])) {
             $command = ['cmd', '/d', '/c', ...$command];
         }
 
-        $process = new Process($command, $path);
-        $process->setTimeout(null);
-        $process->run(fn (string $type, string $buffer) => $this->output->write($buffer));
+        try {
+            $process = new Process($command, $path);
+            $process->setTimeout(null);
+            $process->run(fn (string $type, string $buffer) => $this->output->write($buffer));
+            $exitCode = $process->getExitCode();
+        } finally {
+            @unlink($scriptFile);
+        }
 
-        if ($process->getExitCode() !== 0) {
+        if ($exitCode !== 0) {
             $this->error('[Lando Studio ERROR] The Astro server did not answer on /casino/. See the output above.');
 
             return self::FAILURE;
@@ -69,9 +80,9 @@ class AstroServeCommand extends Command
             ."if [ -f {$pidFile} ]; then kill \$(cat {$pidFile}) 2>/dev/null; sleep 2; fi; "
             ."(env {$envs} PORT={$port} HOST=0.0.0.0 nohup node ./dist/server/entry.mjs > {$logFile} 2>&1 & echo \$! > {$pidFile}); "
             .'ok=0; for i in $(seq 1 60); do '
-            ."code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:{$port}/casino/); "
-            .'if [ "$code" = 200 ]; then ok=1; break; fi; sleep 2; done; '
-            .'if [ "$ok" = 1 ]; then echo "Astro server answers on port '.$port.' (/casino/ 200)"; exit 0; fi; '
-            ."echo 'Astro server did not answer /casino/. Last log lines:' >&2; tail -20 {$logFile} >&2; exit 1";
+            ."code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:{$port}/); "
+            .'case "$code" in 000|5*) sleep 2 ;; *) ok=1; break ;; esac; done; '
+            .'if [ "$ok" = 1 ]; then echo "Astro server answers on port '.$port.' (HTTP $code)"; exit 0; fi; '
+            ."echo 'Astro server did not answer on port {$port}. Last log lines:' >&2; tail -20 {$logFile} >&2; exit 1";
     }
 }

@@ -84,6 +84,7 @@ class AstroCloneStepsTest extends TestCase
             'Installing Astro dependencies',
             'Building Astro project',
             'Starting Astro server',
+            'Routing the front end to Astro',
         ];
 
         $start = array_search('Cloning Astro project', $labels, true);

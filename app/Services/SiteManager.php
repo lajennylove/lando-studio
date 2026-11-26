@@ -537,6 +537,12 @@ class SiteManager
                 'step' => $stepNum++,
                 'inactivity_timeout' => 120,
             ];
+            $steps[] = [
+                'label' => 'Routing the front end to Astro',
+                'command' => $this->astroArtisanCommand('lando-dev:astro-proxy', [$path, (string) $astroPort, (string) $remoteSite->id]),
+                'step' => $stepNum++,
+                'inactivity_timeout' => 120,
+            ];
         }
 
         return $steps;
