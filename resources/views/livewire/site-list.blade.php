@@ -30,7 +30,11 @@
                         } }}" title="{{ $site->status->value ?? $site->status }}"></span>
                         <div class="flex items-center gap-2">
                             @php
-                                $tech = $site->site_type === \App\Enums\SiteType::Astro ? 'astro' : 'wordpress';
+                                $tech = match ($site->site_type) {
+                                    \App\Enums\SiteType::Astro => 'astro',
+                                    \App\Enums\SiteType::Sage => 'sage',
+                                    default => 'wordpress',
+                                };
                                 $techLabel = $site->site_type?->label() ?? 'WordPress';
                             @endphp
                             {{-- Light theme shows the light icon, dark theme the dark one (the .dark class, see app.css). --}}
